@@ -1,7 +1,8 @@
-package docker
+package cli
 
 import (
 	"fmt"
+	"github.com/dotcloud/docker"
 	"github.com/dotcloud/docker/utils"
 	"os"
 	"path/filepath"
@@ -91,7 +92,7 @@ func ValidateAttach(val string) (string, error) {
 }
 
 func ValidateLink(val string) (string, error) {
-	if _, err := parseLink(val); err != nil {
+	if _, err := docker.ParseLink(val); err != nil {
 		return val, err
 	}
 	return val, nil
@@ -124,7 +125,7 @@ func ValidateEnv(val string) (string, error) {
 }
 
 func ValidateHost(val string) (string, error) {
-	host, err := utils.ParseHost(DEFAULTHTTPHOST, DEFAULTHTTPPORT, val)
+	host, err := utils.ParseHost(docker.DEFAULTHTTPHOST, docker.DEFAULTHTTPPORT, val)
 	if err != nil {
 		return val, err
 	}

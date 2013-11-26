@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"archive/tar"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/dotcloud/docker/archive"
@@ -14,6 +16,31 @@ import (
 	"regexp"
 	"strings"
 )
+
+// mkBuildContext returns an archive of an empty context with the contents
+// of `dockerfile` at the path ./Dockerfile
+func MkBuildContext(dockerfile string, files [][2]string) (archive.Archive, error) {
+	buf := new(bytes.Buffer)
+	tw := tar.NewWriter(buf)
+	files = append(files, [2]string{"Dockerfile", dockerfile})
+	for _, file := range files {
+		name, content := file[0], file[1]
+		hdr := &tar.Header{
+			Name: name,
+			Size: int64(len(content)),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return nil, err
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
 
 type BuildFile interface {
 	Build(io.Reader) (string, error)
@@ -83,14 +110,15 @@ func (b *buildFile) CmdRun(args string) error {
 	if b.image == "" {
 		return fmt.Errorf("Please provide a source image with `from` prior to run")
 	}
-	config, _, _, err := ParseRun([]string{b.image, "/bin/sh", "-c", args}, nil)
-	if err != nil {
-		return err
-	}
+	panic("CmdRun temporarly unavailable")
+	// config, _, _, err := utils.ParseRun([]string{b.image, "/bin/sh", "-c", args}, nil)
+	// if err != nil {
+	// 	return err
+	// }
 
 	cmd := b.config.Cmd
 	b.config.Cmd = nil
-	MergeConfig(b.config, config)
+	//	MergeConfig(b.config, config)
 
 	defer func(cmd []string) { b.config.Cmd = cmd }(cmd)
 

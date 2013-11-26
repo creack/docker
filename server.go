@@ -441,9 +441,14 @@ func (srv *Server) ImageInsert(name, url, path string, out io.Writer, sf *utils.
 	}
 	defer file.Body.Close()
 
-	config, _, _, err := ParseRun([]string{img.ID, "echo", "insert", url, path}, srv.runtime.capabilities)
-	if err != nil {
-		return err
+	// config, _, _, err := ParseRun([]string{img.ID, "echo", "insert", url, path}, srv.runtime.capabilities)
+	// if err != nil {
+	// 	return err
+	// }
+
+	config := &Config{
+		Image: img.ID,
+		Cmd:   []string{"echo", "insert", url, path},
 	}
 
 	c, _, err := srv.runtime.Create(config, "")
@@ -1591,7 +1596,7 @@ func (srv *Server) RegisterLinks(name string, hostConfig *HostConfig) error {
 
 	if hostConfig != nil && hostConfig.Links != nil {
 		for _, l := range hostConfig.Links {
-			parts, err := parseLink(l)
+			parts, err := ParseLink(l)
 			if err != nil {
 				return err
 			}

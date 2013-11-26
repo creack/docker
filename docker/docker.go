@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/dotcloud/docker"
+	"github.com/dotcloud/docker/cli"
 	"github.com/dotcloud/docker/engine"
 	"github.com/dotcloud/docker/sysinit"
 	"github.com/dotcloud/docker/utils"
@@ -38,7 +39,7 @@ func main() {
 		flDefaultIp          = flag.String("ip", "0.0.0.0", "Default IP address to use when binding container ports")
 		flInterContainerComm = flag.Bool("icc", true, "Enable inter-container communication")
 		flGraphDriver        = flag.String("s", "", "Force the docker runtime to use a specific storage driver")
-		flHosts              = docker.NewListOpts(docker.ValidateHost)
+		flHosts              = cli.NewListOpts(cli.ValidateHost)
 	)
 	flag.Var(&flHosts, "H", "Multiple tcp://host:port or unix://path/to/socket to bind in daemon mode, single connection otherwise")
 
@@ -51,15 +52,6 @@ func main() {
 	if flHosts.Len() == 0 {
 		// If we do not have a host, default to unix socket
 		flHosts.Set(fmt.Sprintf("unix://%s", docker.DEFAULTUNIXSOCKET))
-	}
-	for _, flHost := range flHosts.GetAll() {
-		host, err := utils.ParseHost(docker.DEFAULTHTTPHOST, docker.DEFAULTHTTPPORT, flHost)
-		if err == nil {
-			flHosts.Set(host)
-			flHosts.Delete(flHost)
-		} else {
-			log.Fatal(err)
-		}
 	}
 
 	if *flDebug {
@@ -102,7 +94,7 @@ func main() {
 			log.Fatal("Please specify only one -H")
 		}
 		protoAddrParts := strings.SplitN(flHosts.GetAll()[0], "://", 2)
-		if err := docker.ParseCommands(protoAddrParts[0], protoAddrParts[1], flag.Args()...); err != nil {
+		if err := cli.ParseCommands(protoAddrParts[0], protoAddrParts[1], flag.Args()...); err != nil {
 			if sterr, ok := err.(*utils.StatusError); ok {
 				os.Exit(sterr.Status)
 			}

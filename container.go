@@ -24,6 +24,11 @@ import (
 	"time"
 )
 
+var (
+	GITCOMMIT string
+	VERSION   string
+)
+
 type Container struct {
 	sync.Mutex
 	root   string // Path to the "home" of the container, including metadata.
@@ -115,11 +120,8 @@ type BindMap struct {
 }
 
 var (
-	ErrContainerStart           = errors.New("The container failed to start. Unkown error")
-	ErrContainerStartTimeout    = errors.New("The container failed to start due to timed out.")
-	ErrInvalidWorikingDirectory = errors.New("The working directory is invalid. It needs to be an absolute path.")
-	ErrConflictAttachDetach     = errors.New("Conflicting options: -a and -d")
-	ErrConflictDetachAutoRemove = errors.New("Conflicting options: -rm and -d")
+	ErrContainerStart        = errors.New("The container failed to start. Unkown error")
+	ErrContainerStartTimeout = errors.New("The container failed to start due to timed out.")
 )
 
 type KeyValuePair struct {

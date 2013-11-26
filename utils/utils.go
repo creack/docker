@@ -11,6 +11,7 @@ import (
 	"index/suffixarray"
 	"io"
 	"io/ioutil"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1300,4 +1301,12 @@ func CopyFile(src, dst string) (int64, error) {
 	}
 	defer df.Close()
 	return io.Copy(df, sf)
+}
+
+func MatchesContentType(contentType, expectedType string) bool {
+	mimetype, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		Errorf("Error parsing media type: %s error: %s", contentType, err.Error())
+	}
+	return err == nil && mimetype == expectedType
 }

@@ -29,6 +29,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -134,7 +135,7 @@ func MergeConfig(userConf, imageConf *Config) error {
 		if userConf.ExposedPorts == nil {
 			userConf.ExposedPorts = make(map[Port]struct{})
 		}
-		ports, _, err := parsePortSpecs(userConf.PortSpecs)
+		ports, _, err := ParsePortSpecs(userConf.PortSpecs)
 		if err != nil {
 			return err
 		}
@@ -151,7 +152,7 @@ func MergeConfig(userConf, imageConf *Config) error {
 			userConf.ExposedPorts = make(map[Port]struct{})
 		}
 
-		ports, _, err := parsePortSpecs(imageConf.PortSpecs)
+		ports, _, err := ParsePortSpecs(imageConf.PortSpecs)
 		if err != nil {
 			return err
 		}
@@ -215,26 +216,6 @@ func MergeConfig(userConf, imageConf *Config) error {
 	return nil
 }
 
-func parseLxcConfOpts(opts ListOpts) ([]KeyValuePair, error) {
-	out := make([]KeyValuePair, opts.Len())
-	for i, o := range opts.GetAll() {
-		k, v, err := parseLxcOpt(o)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = KeyValuePair{Key: k, Value: v}
-	}
-	return out, nil
-}
-
-func parseLxcOpt(opt string) (string, string, error) {
-	parts := strings.SplitN(opt, "=", 2)
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("Unable to parse lxc conf option: %s", opt)
-	}
-	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
-}
-
 // FIXME: network related stuff (including parsing) should be grouped in network file
 const (
 	PortSpecTemplate       = "ip:hostPort:containerPort"
@@ -243,7 +224,7 @@ const (
 
 // We will receive port specs in the format of ip:public:private/proto and these need to be
 // parsed in the internal types
-func parsePortSpecs(ports []string) (map[Port]struct{}, map[Port][]PortBinding, error) {
+func ParsePortSpecs(ports []string) (map[Port]struct{}, map[Port][]PortBinding, error) {
 	var (
 		exposedPorts = make(map[Port]struct{}, len(ports))
 		bindings     = make(map[Port][]PortBinding)
@@ -302,7 +283,7 @@ func parsePortSpecs(ports []string) (map[Port]struct{}, map[Port][]PortBinding, 
 }
 
 // Splits a port in the format of port/proto
-func splitProtoPort(rawPort string) (string, string) {
+func SplitProtoPort(rawPort string) (string, string) {
 	parts := strings.Split(rawPort, "/")
 	l := len(parts)
 	if l == 0 {
@@ -324,7 +305,7 @@ func parsePort(rawPort string) (int, error) {
 
 func migratePortMappings(config *Config, hostConfig *HostConfig) error {
 	if config.PortSpecs != nil {
-		ports, bindings, err := parsePortSpecs(config.PortSpecs)
+		ports, bindings, err := ParsePortSpecs(config.PortSpecs)
 		if err != nil {
 			return err
 		}
@@ -356,7 +337,7 @@ func BtrfsReflink(fd_out, fd_in uintptr) error {
 
 // Links come in the format of
 // name:alias
-func parseLink(rawLink string) (map[string]string, error) {
+func ParseLink(rawLink string) (map[string]string, error) {
 	return utils.PartParser("name:alias", rawLink)
 }
 
@@ -372,6 +353,19 @@ func RootIsShared() bool {
 
 	// No idea, probably safe to assume so
 	return true
+}
+
+func DisplayablePorts(ports []APIPort) string {
+	result := []string{}
+	for _, port := range ports {
+		if port.IP == "" {
+			result = append(result, fmt.Sprintf("%d/%s", port.PublicPort, port.Type))
+		} else {
+			result = append(result, fmt.Sprintf("%s:%d->%d/%s", port.IP, port.PublicPort, port.PrivatePort, port.Type))
+		}
+	}
+	sort.Strings(result)
+	return strings.Join(result, ", ")
 }
 
 type checker struct {

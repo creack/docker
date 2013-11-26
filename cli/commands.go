@@ -1,7 +1,6 @@
-package docker
+package cli
 
 import (
-	"archive/tar"
 	"bufio"
 	"bytes"
 	"encoding/base64"
@@ -9,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/dotcloud/docker"
 	"github.com/dotcloud/docker/archive"
 	"github.com/dotcloud/docker/auth"
 	"github.com/dotcloud/docker/registry"
@@ -26,7 +26,6 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,13 +34,31 @@ import (
 )
 
 var (
-	GITCOMMIT string
-	VERSION   string
+	ErrConnectionRefused        = errors.New("Can't connect to docker daemon. Is 'docker -d' running on this host?")
+	ErrInvalidWorikingDirectory = errors.New("The working directory is invalid. It needs to be an absolute path.")
+	ErrConflictAttachDetach     = errors.New("Conflicting options: -a and -d")
+	ErrConflictDetachAutoRemove = errors.New("Conflicting options: -rm and -d")
 )
 
-var (
-	ErrConnectionRefused = errors.New("Can't connect to docker daemon. Is 'docker -d' running on this host?")
-)
+func parseLxcConfOpts(opts ListOpts) ([]docker.KeyValuePair, error) {
+	out := make([]docker.KeyValuePair, opts.Len())
+	for i, o := range opts.GetAll() {
+		k, v, err := parseLxcOpt(o)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = docker.KeyValuePair{Key: k, Value: v}
+	}
+	return out, nil
+}
+
+func parseLxcOpt(opt string) (string, string, error) {
+	parts := strings.SplitN(opt, "=", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("Unable to parse lxc conf option: %s", opt)
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
+}
 
 func (cli *DockerCli) getMethod(name string) (func(...string) error, bool) {
 	methodName := "Cmd" + strings.ToUpper(name[:1]) + strings.ToLower(name[1:])
@@ -76,7 +93,7 @@ func (cli *DockerCli) CmdHelp(args ...string) error {
 			return nil
 		}
 	}
-	help := fmt.Sprintf("Usage: docker [OPTIONS] COMMAND [arg...]\n -H=[unix://%s]: tcp://host:port to bind/connect to or unix://path/to/socket to use\n\nA self-sufficient runtime for linux containers.\n\nCommands:\n", DEFAULTUNIXSOCKET)
+	help := fmt.Sprintf("Usage: docker [OPTIONS] COMMAND [arg...]\n -H=[unix://%s]: tcp://host:port to bind/connect to or unix://path/to/socket to use\n\nA self-sufficient runtime for linux containers.\n\nCommands:\n", docker.DEFAULTUNIXSOCKET)
 	for _, command := range [][]string{
 		{"attach", "Attach to a running container"},
 		{"build", "Build a container from a Dockerfile"},
@@ -135,31 +152,6 @@ func (cli *DockerCli) CmdInsert(args ...string) error {
 	return cli.stream("POST", "/images/"+cmd.Arg(0)+"/insert?"+v.Encode(), nil, cli.out, nil)
 }
 
-// mkBuildContext returns an archive of an empty context with the contents
-// of `dockerfile` at the path ./Dockerfile
-func MkBuildContext(dockerfile string, files [][2]string) (archive.Archive, error) {
-	buf := new(bytes.Buffer)
-	tw := tar.NewWriter(buf)
-	files = append(files, [2]string{"Dockerfile", dockerfile})
-	for _, file := range files {
-		name, content := file[0], file[1]
-		hdr := &tar.Header{
-			Name: name,
-			Size: int64(len(content)),
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return nil, err
-		}
-		if _, err := tw.Write([]byte(content)); err != nil {
-			return nil, err
-		}
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	return buf, nil
-}
-
 func (cli *DockerCli) CmdBuild(args ...string) error {
 	cmd := cli.Subcmd("build", "[OPTIONS] PATH | URL | -", "Build a new container image from the source code at PATH")
 	tag := cmd.String("t", "", "Repository name (and optionally a tag) to be applied to the resulting image in case of success")
@@ -187,7 +179,7 @@ func (cli *DockerCli) CmdBuild(args ...string) error {
 		if err != nil {
 			return err
 		}
-		context, err = MkBuildContext(string(dockerfile), nil)
+		context, err = docker.MkBuildContext(string(dockerfile), nil)
 	} else if utils.IsURL(cmd.Arg(0)) || utils.IsGIT(cmd.Arg(0)) {
 		isRemote = true
 	} else {
@@ -219,7 +211,7 @@ func (cli *DockerCli) CmdBuild(args ...string) error {
 	if *rm {
 		v.Set("rm", "1")
 	}
-	req, err := http.NewRequest("POST", fmt.Sprintf("/v%g/build?%s", APIVERSION, v.Encode()), body)
+	req, err := http.NewRequest("POST", fmt.Sprintf("/v%g/build?%s", docker.APIVERSION, v.Encode()), body)
 	if err != nil {
 		return err
 	}
@@ -352,7 +344,7 @@ func (cli *DockerCli) CmdLogin(args ...string) error {
 		return err
 	}
 
-	var out2 APIAuth
+	var out2 docker.APIAuth
 	err = json.Unmarshal(body, &out2)
 	if err != nil {
 		cli.configFile, _ = auth.LoadConfig(os.Getenv("HOME"))
@@ -399,12 +391,12 @@ func (cli *DockerCli) CmdVersion(args ...string) error {
 		cmd.Usage()
 		return nil
 	}
-	if VERSION != "" {
-		fmt.Fprintf(cli.out, "Client version: %s\n", VERSION)
+	if docker.VERSION != "" {
+		fmt.Fprintf(cli.out, "Client version: %s\n", docker.VERSION)
 	}
 	fmt.Fprintf(cli.out, "Go version (client): %s\n", runtime.Version())
-	if GITCOMMIT != "" {
-		fmt.Fprintf(cli.out, "Git commit (client): %s\n", GITCOMMIT)
+	if docker.GITCOMMIT != "" {
+		fmt.Fprintf(cli.out, "Git commit (client): %s\n", docker.GITCOMMIT)
 	}
 
 	body, _, err := cli.call("GET", "/version", nil)
@@ -412,7 +404,7 @@ func (cli *DockerCli) CmdVersion(args ...string) error {
 		return err
 	}
 
-	var out APIVersion
+	var out docker.APIVersion
 	err = json.Unmarshal(body, &out)
 	if err != nil {
 		utils.Errorf("Error unmarshal: body: %s, err: %s\n", body, err)
@@ -431,7 +423,7 @@ func (cli *DockerCli) CmdVersion(args ...string) error {
 	release := utils.GetReleaseVersion()
 	if release != "" {
 		fmt.Fprintf(cli.out, "Last stable version: %s", release)
-		if (VERSION != "" || out.Version != "") && (strings.Trim(VERSION, "-dev") != release || strings.Trim(out.Version, "-dev") != release) {
+		if (docker.VERSION != "" || out.Version != "") && (strings.Trim(docker.VERSION, "-dev") != release || strings.Trim(out.Version, "-dev") != release) {
 			fmt.Fprintf(cli.out, ", please update docker")
 		}
 		fmt.Fprintf(cli.out, "\n")
@@ -455,7 +447,7 @@ func (cli *DockerCli) CmdInfo(args ...string) error {
 		return err
 	}
 
-	var out APIInfo
+	var out docker.APIInfo
 	if err := json.Unmarshal(body, &out); err != nil {
 		return err
 	}
@@ -590,7 +582,7 @@ func (cli *DockerCli) CmdStart(args ...string) error {
 			return err
 		}
 
-		container := &Container{}
+		container := &docker.Container{}
 		err = json.Unmarshal(body, container)
 		if err != nil {
 			return err
@@ -721,7 +713,7 @@ func (cli *DockerCli) CmdTop(args ...string) error {
 	if err != nil {
 		return err
 	}
-	procs := APITop{}
+	procs := docker.APITop{}
 	err = json.Unmarshal(body, &procs)
 	if err != nil {
 		return err
@@ -756,13 +748,13 @@ func (cli *DockerCli) CmdPort(args ...string) error {
 	if err != nil {
 		return err
 	}
-	var out Container
+	var out docker.Container
 	err = json.Unmarshal(body, &out)
 	if err != nil {
 		return err
 	}
 
-	if frontends, exists := out.NetworkSettings.Ports[Port(port+"/"+proto)]; exists {
+	if frontends, exists := out.NetworkSettings.Ports[docker.Port(port+"/"+proto)]; exists {
 		if frontends == nil {
 			fmt.Fprintf(cli.out, "%s\n", port)
 		} else {
@@ -794,7 +786,7 @@ func (cli *DockerCli) CmdRmi(args ...string) error {
 			fmt.Fprintf(cli.err, "%s\n", err)
 			encounteredError = fmt.Errorf("Error: failed to remove one or more images")
 		} else {
-			var outs []APIRmi
+			var outs []docker.APIRmi
 			err = json.Unmarshal(body, &outs)
 			if err != nil {
 				fmt.Fprintf(cli.err, "%s\n", err)
@@ -831,7 +823,7 @@ func (cli *DockerCli) CmdHistory(args ...string) error {
 		return err
 	}
 
-	var outs []APIHistory
+	var outs []docker.APIHistory
 	err = json.Unmarshal(body, &outs)
 	if err != nil {
 		return err
@@ -1104,7 +1096,7 @@ func (cli *DockerCli) CmdImages(args ...string) error {
 			return err
 		}
 
-		var outs []APIImages
+		var outs []docker.APIImages
 		err = json.Unmarshal(body, &outs)
 		if err != nil {
 			return err
@@ -1130,17 +1122,17 @@ func (cli *DockerCli) CmdImages(args ...string) error {
 			return err
 		}
 
-		var outs []APIImages
+		var outs []docker.APIImages
 		if err := json.Unmarshal(body, &outs); err != nil {
 			return err
 		}
 
 		var (
 			startImageArg = cmd.Arg(0)
-			startImage    APIImages
+			startImage    docker.APIImages
 
-			roots    []APIImages
-			byParent = make(map[string][]APIImages)
+			roots    []docker.APIImages
+			byParent = make(map[string][]docker.APIImages)
 		)
 
 		for _, image := range outs {
@@ -1150,7 +1142,7 @@ func (cli *DockerCli) CmdImages(args ...string) error {
 				if children, exists := byParent[image.ParentId]; exists {
 					byParent[image.ParentId] = append(children, image)
 				} else {
-					byParent[image.ParentId] = []APIImages{image}
+					byParent[image.ParentId] = []docker.APIImages{image}
 				}
 			}
 
@@ -1168,7 +1160,7 @@ func (cli *DockerCli) CmdImages(args ...string) error {
 		}
 
 		if startImageArg != "" {
-			WalkTree(cli, noTrunc, []APIImages{startImage}, byParent, "")
+			WalkTree(cli, noTrunc, []docker.APIImages{startImage}, byParent, "")
 		} else {
 			WalkTree(cli, noTrunc, roots, byParent, "")
 		}
@@ -1186,7 +1178,7 @@ func (cli *DockerCli) CmdImages(args ...string) error {
 			return err
 		}
 
-		var outs []APIImages
+		var outs []docker.APIImages
 		err = json.Unmarshal(body, &outs)
 		if err != nil {
 			return err
@@ -1226,7 +1218,7 @@ func (cli *DockerCli) CmdImages(args ...string) error {
 	return nil
 }
 
-func WalkTree(cli *DockerCli, noTrunc *bool, images []APIImages, byParent map[string][]APIImages, prefix string) {
+func WalkTree(cli *DockerCli, noTrunc *bool, images []docker.APIImages, byParent map[string][]docker.APIImages, prefix string) {
 	if len(images) > 1 {
 		length := len(images)
 		for index, image := range images {
@@ -1252,7 +1244,7 @@ func WalkTree(cli *DockerCli, noTrunc *bool, images []APIImages, byParent map[st
 	}
 }
 
-func PrintTreeNode(cli *DockerCli, noTrunc *bool, image APIImages, prefix string) {
+func PrintTreeNode(cli *DockerCli, noTrunc *bool, image docker.APIImages, prefix string) {
 	var imageID string
 	if *noTrunc {
 		imageID = image.ID
@@ -1266,19 +1258,6 @@ func PrintTreeNode(cli *DockerCli, noTrunc *bool, image APIImages, prefix string
 	} else {
 		fmt.Fprint(cli.out, "\n")
 	}
-}
-
-func displayablePorts(ports []APIPort) string {
-	result := []string{}
-	for _, port := range ports {
-		if port.IP == "" {
-			result = append(result, fmt.Sprintf("%d/%s", port.PublicPort, port.Type))
-		} else {
-			result = append(result, fmt.Sprintf("%s:%d->%d/%s", port.IP, port.PublicPort, port.PrivatePort, port.Type))
-		}
-	}
-	sort.Strings(result)
-	return strings.Join(result, ", ")
 }
 
 func (cli *DockerCli) CmdPs(args ...string) error {
@@ -1320,7 +1299,7 @@ func (cli *DockerCli) CmdPs(args ...string) error {
 		return err
 	}
 
-	var outs []APIContainers
+	var outs []docker.APIContainers
 	err = json.Unmarshal(body, &outs)
 	if err != nil {
 		return err
@@ -1349,7 +1328,7 @@ func (cli *DockerCli) CmdPs(args ...string) error {
 			if !*noTrunc {
 				out.Command = utils.Trunc(out.Command, 20)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s ago\t%s\t%s\t%s\t", out.ID, out.Image, out.Command, utils.HumanDuration(time.Now().UTC().Sub(time.Unix(out.Created, 0))), out.Status, displayablePorts(out.Ports), strings.Join(out.Names, ","))
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s ago\t%s\t%s\t%s\t", out.ID, out.Image, out.Command, utils.HumanDuration(time.Now().UTC().Sub(time.Unix(out.Created, 0))), out.Status, docker.DisplayablePorts(out.Ports), strings.Join(out.Names, ","))
 			if *size {
 				if out.SizeRootFs > 0 {
 					fmt.Fprintf(w, "%s (virtual %s)\n", utils.HumanSize(out.SizeRw), utils.HumanSize(out.SizeRootFs))
@@ -1400,9 +1379,9 @@ func (cli *DockerCli) CmdCommit(args ...string) error {
 	v.Set("tag", tag)
 	v.Set("comment", *flComment)
 	v.Set("author", *flAuthor)
-	var config *Config
+	var config *docker.Config
 	if *flConfig != "" {
-		config = &Config{}
+		config = &docker.Config{}
 		if err := json.Unmarshal([]byte(*flConfig), config); err != nil {
 			return err
 		}
@@ -1412,7 +1391,7 @@ func (cli *DockerCli) CmdCommit(args ...string) error {
 		return err
 	}
 
-	apiID := &APIID{}
+	apiID := &docker.APIID{}
 	err = json.Unmarshal(body, apiID)
 	if err != nil {
 		return err
@@ -1487,7 +1466,7 @@ func (cli *DockerCli) CmdDiff(args ...string) error {
 		return err
 	}
 
-	changes := []Change{}
+	changes := []docker.Change{}
 	err = json.Unmarshal(body, &changes)
 	if err != nil {
 		return err
@@ -1513,7 +1492,7 @@ func (cli *DockerCli) CmdLogs(args ...string) error {
 		return err
 	}
 
-	container := &Container{}
+	container := &docker.Container{}
 	err = json.Unmarshal(body, container)
 	if err != nil {
 		return err
@@ -1542,7 +1521,7 @@ func (cli *DockerCli) CmdAttach(args ...string) error {
 		return err
 	}
 
-	container := &Container{}
+	container := &docker.Container{}
 	err = json.Unmarshal(body, container)
 	if err != nil {
 		return err
@@ -1668,15 +1647,14 @@ func (cli *DockerCli) CmdTag(args ...string) error {
 	return nil
 }
 
-//FIXME Only used in tests
-func ParseRun(args []string, capabilities *Capabilities) (*Config, *HostConfig, *flag.FlagSet, error) {
+func ParseRun(args []string, capabilities *docker.Capabilities) (*docker.Config, *docker.HostConfig, *flag.FlagSet, error) {
 	cmd := flag.NewFlagSet("run", flag.ContinueOnError)
 	cmd.SetOutput(ioutil.Discard)
 	cmd.Usage = nil
 	return parseRun(cmd, args, capabilities)
 }
 
-func parseRun(cmd *flag.FlagSet, args []string, capabilities *Capabilities) (*Config, *HostConfig, *flag.FlagSet, error) {
+func parseRun(cmd *flag.FlagSet, args []string, capabilities *docker.Capabilities) (*docker.Config, *docker.HostConfig, *flag.FlagSet, error) {
 	var (
 		// FIXME: use utils.ListOpts for attach and volumes?
 		flAttach  = NewListOpts(ValidateAttach)
@@ -1715,7 +1693,7 @@ func parseRun(cmd *flag.FlagSet, args []string, capabilities *Capabilities) (*Co
 	cmd.Var(&flLinks, "link", "Add link to another container (name:alias)")
 	cmd.Var(&flEnv, "e", "Set environment variables")
 
-	cmd.Var(&flPublish, "p", fmt.Sprintf("Publish a container's port to the host (format: %s) (use 'docker port' to see the actual mapping)", PortSpecTemplateFormat))
+	cmd.Var(&flPublish, "p", fmt.Sprintf("Publish a container's port to the host (format: %s) (use 'docker port' to see the actual mapping)", docker.PortSpecTemplateFormat))
 	cmd.Var(&flExpose, "expose", "Expose a port from the container without publishing it to your host")
 	cmd.Var(&flDns, "dns", "Set custom dns servers")
 	cmd.Var(&flVolumesFrom, "volumes-from", "Mount volumes from the specified container(s)")
@@ -1806,7 +1784,7 @@ func parseRun(cmd *flag.FlagSet, args []string, capabilities *Capabilities) (*Co
 		domainname = parts[1]
 	}
 
-	ports, portBindings, err := parsePortSpecs(flPublish.GetAll())
+	ports, portBindings, err := docker.ParsePortSpecs(flPublish.GetAll())
 	if err != nil {
 		return nil, nil, cmd, err
 	}
@@ -1816,13 +1794,13 @@ func parseRun(cmd *flag.FlagSet, args []string, capabilities *Capabilities) (*Co
 		if strings.Contains(e, ":") {
 			return nil, nil, cmd, fmt.Errorf("Invalid port format for -expose: %s", e)
 		}
-		p := NewPort(splitProtoPort(e))
+		p := docker.NewPort(docker.SplitProtoPort(e))
 		if _, exists := ports[p]; !exists {
 			ports[p] = struct{}{}
 		}
 	}
 
-	config := &Config{
+	config := &docker.Config{
 		Hostname:        hostname,
 		Domainname:      domainname,
 		PortSpecs:       nil, // Deprecated
@@ -1846,7 +1824,7 @@ func parseRun(cmd *flag.FlagSet, args []string, capabilities *Capabilities) (*Co
 		WorkingDir:      *flWorkingDir,
 	}
 
-	hostConfig := &HostConfig{
+	hostConfig := &docker.HostConfig{
 		Binds:           binds,
 		ContainerIDFile: *flContainerIDFile,
 		LxcConf:         lxcConf,
@@ -1914,7 +1892,7 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 	if statusCode == 404 {
 		_, tag := utils.ParseRepositoryTag(config.Image)
 		if tag == "" {
-			tag = DEFAULTTAG
+			tag = docker.DEFAULTTAG
 		}
 
 		fmt.Fprintf(cli.err, "Unable to find image '%s' (tag: %s) locally\n", config.Image, tag)
@@ -1953,7 +1931,7 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		return err
 	}
 
-	var runResult APIRun
+	var runResult docker.APIRun
 	if err := json.Unmarshal(body, &runResult); err != nil {
 		return err
 	}
@@ -2109,7 +2087,7 @@ func (cli *DockerCli) CmdCp(args ...string) error {
 		return nil
 	}
 
-	var copyData APICopy
+	var copyData docker.APICopy
 	info := strings.Split(cmd.Arg(0), ":")
 
 	if len(info) != 2 {
@@ -2182,11 +2160,11 @@ func (cli *DockerCli) call(method, path string, data interface{}) ([]byte, int, 
 	re := regexp.MustCompile("/+")
 	path = re.ReplaceAllString(path, "/")
 
-	req, err := http.NewRequest(method, fmt.Sprintf("/v%g%s", APIVERSION, path), params)
+	req, err := http.NewRequest(method, fmt.Sprintf("/v%g%s", docker.APIVERSION, path), params)
 	if err != nil {
 		return nil, -1, err
 	}
-	req.Header.Set("User-Agent", "Docker-Client/"+VERSION)
+	req.Header.Set("User-Agent", "Docker-Client/"+docker.VERSION)
 	req.Host = cli.addr
 	if data != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -2233,11 +2211,11 @@ func (cli *DockerCli) stream(method, path string, in io.Reader, out io.Writer, h
 	re := regexp.MustCompile("/+")
 	path = re.ReplaceAllString(path, "/")
 
-	req, err := http.NewRequest(method, fmt.Sprintf("/v%g%s", APIVERSION, path), in)
+	req, err := http.NewRequest(method, fmt.Sprintf("/v%g%s", docker.APIVERSION, path), in)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "Docker-Client/"+VERSION)
+	req.Header.Set("User-Agent", "Docker-Client/"+docker.VERSION)
 	req.Host = cli.addr
 	if method == "POST" {
 		req.Header.Set("Content-Type", "plain/text")
@@ -2278,7 +2256,7 @@ func (cli *DockerCli) stream(method, path string, in io.Reader, out io.Writer, h
 		return fmt.Errorf("Error: %s", bytes.TrimSpace(body))
 	}
 
-	if matchesContentType(resp.Header.Get("Content-Type"), "application/json") {
+	if utils.MatchesContentType(resp.Header.Get("Content-Type"), "application/json") {
 		return utils.DisplayJSONMessagesStream(resp.Body, out, cli.isTerminal)
 	}
 	if _, err := io.Copy(out, resp.Body); err != nil {
@@ -2297,11 +2275,11 @@ func (cli *DockerCli) hijack(method, path string, setRawTerminal bool, in io.Rea
 	re := regexp.MustCompile("/+")
 	path = re.ReplaceAllString(path, "/")
 
-	req, err := http.NewRequest(method, fmt.Sprintf("/v%g%s", APIVERSION, path), nil)
+	req, err := http.NewRequest(method, fmt.Sprintf("/v%g%s", docker.APIVERSION, path), nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "Docker-Client/"+VERSION)
+	req.Header.Set("User-Agent", "Docker-Client/"+docker.VERSION)
 	req.Header.Set("Content-Type", "plain/text")
 	req.Host = cli.addr
 
@@ -2451,7 +2429,7 @@ func waitForExit(cli *DockerCli, containerId string) (int, error) {
 		return -1, nil
 	}
 
-	var out APIWait
+	var out docker.APIWait
 	if err := json.Unmarshal(body, &out); err != nil {
 		return -1, err
 	}
@@ -2469,7 +2447,7 @@ func getExitCode(cli *DockerCli, containerId string) (bool, int, error) {
 		}
 		return false, -1, nil
 	}
-	c := &Container{}
+	c := &docker.Container{}
 	if err := json.Unmarshal(body, c); err != nil {
 		return false, -1, err
 	}

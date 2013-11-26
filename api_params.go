@@ -143,7 +143,7 @@ func (api APIContainers) ToLegacy() *APIContainersOld {
 		Command:    api.Command,
 		Created:    api.Created,
 		Status:     api.Status,
-		Ports:      displayablePorts(api.Ports),
+		Ports:      DisplayablePorts(api.Ports),
 		SizeRw:     api.SizeRw,
 		SizeRootFs: api.SizeRootFs,
 	}

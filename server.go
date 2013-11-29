@@ -10,6 +10,7 @@ import (
 	"github.com/dotcloud/docker/engine"
 	"github.com/dotcloud/docker/graphdb"
 	"github.com/dotcloud/docker/registry"
+	"github.com/dotcloud/docker/stats"
 	"github.com/dotcloud/docker/utils"
 	"io"
 	"io/ioutil"
@@ -593,8 +594,18 @@ func (srv *Server) DockerInfo() *APIInfo {
 		kernelVersion = kv.String()
 	}
 
+	containerinfo := srv.runtime.NewContainerInfo()
+	sysinfo := stats.NewSysInfo()
+
 	return &APIInfo{
-		Containers:         len(srv.runtime.List()),
+		Containers:         containerinfo.NumTotal,
+		RunningContainers:  containerinfo.NumRunning,
+		MemUsageRunning:    containerinfo.MemInfo.running,
+		MemUsageTotal:      containerinfo.MemInfo.total,
+		CPUCores:           sysinfo.CpuInfo.Cpus,
+		CPUAverage:         sysinfo.CpuInfo.Average,
+		FreeRAM:            sysinfo.MemInfo.Free,
+		TotalRAM:           sysinfo.MemInfo.Total,
 		Images:             imgcount,
 		Driver:             srv.runtime.driver.String(),
 		DriverStatus:       srv.runtime.driver.Status(),

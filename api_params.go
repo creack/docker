@@ -32,6 +32,13 @@ type (
 	APIInfo struct {
 		Debug              bool
 		Containers         int
+		RunningContainers  int
+		MemUsageRunning    int64
+		MemUsageTotal      int64
+		CPUCores           int
+		CPUAverage         [3]float64
+		FreeRAM            uint64
+		TotalRAM           uint64
 		Images             int
 		Driver             string      `json:",omitempty"`
 		DriverStatus       [][2]string `json:",omitempty"`

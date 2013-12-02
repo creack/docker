@@ -74,6 +74,9 @@ func layerArchive(tarfile string) (io.Reader, error) {
 }
 
 func init() {
+	// Always use the same driver (vfs) for all integration tests.
+	// To test other drivers, we need a dedicated driver validation suite.
+	os.Setenv("DOCKER_DRIVER", "vfs")
 	os.Setenv("TEST", "1")
 
 	// Hack to run sys init during unit testing
@@ -387,7 +390,7 @@ func startEchoServerContainer(t *testing.T, proto string) (*docker.Runtime, *doc
 		jobCreate.SetenvList("Cmd", []string{"sh", "-c", cmd})
 		jobCreate.SetenvList("PortSpecs", []string{fmt.Sprintf("%s/%s", strPort, proto)})
 		jobCreate.SetenvJson("ExposedPorts", ep)
-		jobCreate.StdoutParseString(&id)
+		jobCreate.Stdout.AddString(&id)
 		if err := jobCreate.Run(); err != nil {
 			t.Fatal(err)
 		}

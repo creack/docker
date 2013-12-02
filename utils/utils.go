@@ -270,13 +270,14 @@ func isValidDockerInitPath(target string, selfPath string) bool { // target and 
 }
 
 // Figure out the path of our dockerinit (which may be SelfPath())
-func DockerInitPath() string {
+func DockerInitPath(localCopy string) string {
 	selfPath := SelfPath()
 	if isValidDockerInitPath(selfPath, selfPath) {
 		// if we're valid, don't bother checking anything else
 		return selfPath
 	}
 	var possibleInits = []string{
+		localCopy,
 		filepath.Join(filepath.Dir(selfPath), "dockerinit"),
 		// "/usr/libexec includes internal binaries that are not intended to be executed directly by users or shell scripts. Applications may use a single subdirectory under /usr/libexec."
 		"/usr/libexec/docker/dockerinit",
@@ -411,7 +412,7 @@ func (w *WriteBroadcaster) Write(p []byte) (n int, err error) {
 					w.buf.Write([]byte(line))
 					break
 				}
-				b, err := json.Marshal(&JSONLog{Log: line, Stream: sw.stream, Created: time.Now()})
+				b, err := json.Marshal(&JSONLog{Log: line, Stream: sw.stream, Created: time.Now().UTC()})
 				if err != nil {
 					// On error, evict the writer
 					delete(w.writers, sw)
@@ -542,7 +543,7 @@ func CopyEscapable(dst io.Writer, src io.ReadCloser) (written int64, err error) 
 					if err := src.Close(); err != nil {
 						return 0, err
 					}
-					return 0, io.EOF
+					return 0, nil
 				}
 			}
 			// ---- End of docker
@@ -1292,4 +1293,24 @@ func GetCallerName(depth int) string {
 	parts := strings.Split(callerLongName, ".")
 	callerShortName := parts[len(parts)-1]
 	return callerShortName
+}
+
+func CopyFile(src, dst string) (int64, error) {
+	if src == dst {
+		return 0, nil
+	}
+	sf, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer sf.Close()
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		return 0, err
+	}
+	df, err := os.Create(dst)
+	if err != nil {
+		return 0, err
+	}
+	defer df.Close()
+	return io.Copy(df, sf)
 }

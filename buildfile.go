@@ -293,7 +293,7 @@ func (b *buildFile) addContext(container *Container, orig, dest string) error {
 		destPath = destPath + "/"
 	}
 	if !strings.HasPrefix(origPath, b.context) {
-		return fmt.Errorf("Forbidden path: %s", origPath)
+		return fmt.Errorf("Forbidden path outside the build context: %s (%s)", orig, origPath)
 	}
 	fi, err := os.Stat(origPath)
 	if err != nil {
@@ -496,7 +496,7 @@ func (b *buildFile) Build(context io.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := archive.Untar(context, name); err != nil {
+	if err := archive.Untar(context, name, nil); err != nil {
 		return "", err
 	}
 	defer os.RemoveAll(name)

@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"bufio"
+	"bytes"
 	"code.google.com/p/go.net/websocket"
 	"encoding/base64"
 	"encoding/json"
@@ -15,6 +17,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/exec"
 	"regexp"
@@ -254,7 +257,7 @@ func getEvents(srv *Server, version float64, w http.ResponseWriter, r *http.Requ
 	wf.Flush()
 	if since != 0 {
 		// If since, send previous events that happened after the timestamp
-		for _, event := range srv.events {
+		for _, event := range srv.GetEvents() {
 			if event.Time >= since {
 				err := sendEvent(wf, &event)
 				if err != nil && err.Error() == "JSON error" {
@@ -564,11 +567,17 @@ func postContainersCreate(srv *Server, version float64, w http.ResponseWriter, r
 		job.SetenvList("Dns", defaultDns)
 	}
 	// Read container ID from the first line of stdout
-	job.StdoutParseString(&out.ID)
+	job.Stdout.AddString(&out.ID)
 	// Read warnings from stderr
-	job.StderrParseLines(&out.Warnings, 0)
+	warnings := &bytes.Buffer{}
+	job.Stderr.Add(warnings)
 	if err := job.Run(); err != nil {
 		return err
+	}
+	// Parse warnings from stderr
+	scanner := bufio.NewScanner(warnings)
+	for scanner.Scan() {
+		out.Warnings = append(out.Warnings, scanner.Text())
 	}
 	if job.GetenvInt("Memory") > 0 && !srv.runtime.capabilities.MemoryLimit {
 		log.Println("WARNING: Your kernel does not support memory limit capabilities. Limitation discarded.")
@@ -1045,9 +1054,21 @@ func makeHttpHandler(srv *Server, logging bool, localMethod string, localRoute s
 	}
 }
 
+func AttachProfiler(router *mux.Router) {
+	router.HandleFunc("/debug/pprof/", pprof.Index)
+	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	router.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	router.HandleFunc("/debug/pprof/heap", pprof.Handler("heap").ServeHTTP)
+	router.HandleFunc("/debug/pprof/goroutine", pprof.Handler("goroutine").ServeHTTP)
+	router.HandleFunc("/debug/pprof/threadcreate", pprof.Handler("threadcreate").ServeHTTP)
+}
+
 func createRouter(srv *Server, logging bool) (*mux.Router, error) {
 	r := mux.NewRouter()
-
+	if os.Getenv("DEBUG") != "" {
+		AttachProfiler(r)
+	}
 	m := map[string]map[string]HttpApiFunc{
 		"GET": {
 			"/events":                         getEvents,

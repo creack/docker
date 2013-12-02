@@ -437,6 +437,10 @@ func (cli *DockerCli) CmdInfo(args ...string) error {
 
 	fmt.Fprintf(cli.out, "Containers: %d\n", out.Containers)
 	fmt.Fprintf(cli.out, "Images: %d\n", out.Images)
+	fmt.Fprintf(cli.out, "Driver: %s\n", out.Driver)
+	for _, pair := range out.DriverStatus {
+		fmt.Fprintf(cli.out, " %s: %s\n", pair[0], pair[1])
+	}
 	if out.Debug || os.Getenv("DEBUG") != "" {
 		fmt.Fprintf(cli.out, "Debug mode (server): %v\n", out.Debug)
 		fmt.Fprintf(cli.out, "Debug mode (client): %v\n", os.Getenv("DEBUG") != "")
@@ -821,7 +825,7 @@ func (cli *DockerCli) CmdHistory(args ...string) error {
 				fmt.Fprintf(w, "%s\t", utils.TruncateID(out.ID))
 			}
 
-			fmt.Fprintf(w, "%s ago\t", utils.HumanDuration(time.Now().Sub(time.Unix(out.Created, 0))))
+			fmt.Fprintf(w, "%s ago\t", utils.HumanDuration(time.Now().UTC().Sub(time.Unix(out.Created, 0))))
 
 			if *noTrunc {
 				fmt.Fprintf(w, "%s\t", out.CreatedBy)
@@ -1102,16 +1106,18 @@ func (cli *DockerCli) CmdImages(args ...string) error {
 		}
 
 		var outs []APIImages
-		err = json.Unmarshal(body, &outs)
-		if err != nil {
+		if err := json.Unmarshal(body, &outs); err != nil {
 			return err
 		}
 
-		var startImageArg = cmd.Arg(0)
-		var startImage APIImages
+		var (
+			startImageArg = cmd.Arg(0)
+			startImage    APIImages
 
-		var roots []APIImages
-		var byParent = make(map[string][]APIImages)
+			roots    []APIImages
+			byParent = make(map[string][]APIImages)
+		)
+
 		for _, image := range outs {
 			if image.ParentId == "" {
 				roots = append(roots, image)
@@ -1176,7 +1182,7 @@ func (cli *DockerCli) CmdImages(args ...string) error {
 				}
 
 				if !*quiet {
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s ago\t", repo, tag, out.ID, utils.HumanDuration(time.Now().Sub(time.Unix(out.Created, 0))))
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s ago\t", repo, tag, out.ID, utils.HumanDuration(time.Now().UTC().Sub(time.Unix(out.Created, 0))))
 					if out.VirtualSize > 0 {
 						fmt.Fprintf(w, "%s (virtual %s)\n", utils.HumanSize(out.Size), utils.HumanSize(out.VirtualSize))
 					} else {
@@ -1318,7 +1324,7 @@ func (cli *DockerCli) CmdPs(args ...string) error {
 			if !*noTrunc {
 				out.Command = utils.Trunc(out.Command, 20)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s ago\t%s\t%s\t%s\t", out.ID, out.Image, out.Command, utils.HumanDuration(time.Now().Sub(time.Unix(out.Created, 0))), out.Status, displayablePorts(out.Ports), strings.Join(out.Names, ","))
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s ago\t%s\t%s\t%s\t", out.ID, out.Image, out.Command, utils.HumanDuration(time.Now().UTC().Sub(time.Unix(out.Created, 0))), out.Status, displayablePorts(out.Ports), strings.Join(out.Names, ","))
 			if *size {
 				if out.SizeRootFs > 0 {
 					fmt.Fprintf(w, "%s (virtual %s)\n", utils.HumanSize(out.SizeRw), utils.HumanSize(out.SizeRootFs))
@@ -1425,7 +1431,7 @@ func (cli *DockerCli) CmdEvents(args ...string) error {
 }
 
 func (cli *DockerCli) CmdExport(args ...string) error {
-	cmd := cli.Subcmd("export", "CONTAINER", "Export the contents of a filesystem as a tar archive")
+	cmd := cli.Subcmd("export", "CONTAINER", "Export the contents of a filesystem as a tar archive to STDOUT")
 	if err := cmd.Parse(args); err != nil {
 		return nil
 	}
@@ -1546,6 +1552,15 @@ func (cli *DockerCli) CmdAttach(args ...string) error {
 	if err := cli.hijack("POST", "/containers/"+cmd.Arg(0)+"/attach?"+v.Encode(), container.Config.Tty, in, cli.out, cli.err, nil); err != nil {
 		return err
 	}
+
+	_, status, err := getExitCode(cli, cmd.Arg(0))
+	if err != nil {
+		return err
+	}
+	if status != 0 {
+		return &utils.StatusError{Status: status}
+	}
+
 	return nil
 }
 
@@ -1618,11 +1633,12 @@ func (opts AttachOpts) Set(val string) error {
 // LinkOpts stores arguments to `docker run -link`
 type LinkOpts []string
 
-func (link LinkOpts) String() string { return fmt.Sprintf("%v", []string(link)) }
-func (link LinkOpts) Set(val string) error {
+func (link *LinkOpts) String() string { return fmt.Sprintf("%v", []string(*link)) }
+func (link *LinkOpts) Set(val string) error {
 	if _, err := parseLink(val); err != nil {
 		return err
 	}
+	*link = append(*link, val)
 	return nil
 }
 
@@ -1633,8 +1649,11 @@ func (opts PathOpts) String() string { return fmt.Sprintf("%v", map[string]struc
 func (opts PathOpts) Set(val string) error {
 	var containerPath string
 
-	splited := strings.SplitN(val, ":", 2)
-	if len(splited) == 1 {
+	if strings.Count(val, ":") > 2 {
+		return fmt.Errorf("bad format for volumes: %s", val)
+	}
+
+	if splited := strings.SplitN(val, ":", 2); len(splited) == 1 {
 		containerPath = splited[0]
 		val = filepath.Clean(splited[0])
 	} else {
@@ -1647,6 +1666,7 @@ func (opts PathOpts) Set(val string) error {
 		return fmt.Errorf("%s is not an absolute path", containerPath)
 	}
 	opts[val] = struct{}{}
+
 	return nil
 }
 
@@ -1728,7 +1748,7 @@ func parseRun(cmd *flag.FlagSet, args []string, capabilities *Capabilities) (*Co
 
 	cmd.Var(flAttach, "a", "Attach to stdin, stdout or stderr.")
 	cmd.Var(flVolumes, "v", "Bind mount a volume (e.g. from the host: -v /host:/container, from docker: -v /container)")
-	cmd.Var(flLinks, "link", "Add link to another container (name:alias)")
+	cmd.Var(&flLinks, "link", "Add link to another container (name:alias)")
 
 	cmd.Var(&flPublish, "p", fmt.Sprintf("Publish a container's port to the host (format: %s) (use 'docker port' to see the actual mapping)", PortSpecTemplateFormat))
 	cmd.Var(&flExpose, "expose", "Expose a port from the container without publishing it to your host")
@@ -1977,8 +1997,7 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		if body, _, err = cli.call("POST", "/containers/create?"+containerValues.Encode(), config); err != nil {
 			return err
 		}
-	}
-	if err != nil {
+	} else if err != nil {
 		return err
 	}
 
@@ -2155,7 +2174,7 @@ func (cli *DockerCli) CmdCp(args ...string) error {
 
 	if statusCode == 200 {
 		r := bytes.NewReader(data)
-		if err := archive.Untar(r, copyData.HostPath); err != nil {
+		if err := archive.Untar(r, copyData.HostPath, nil); err != nil {
 			return err
 		}
 	}
@@ -2163,7 +2182,7 @@ func (cli *DockerCli) CmdCp(args ...string) error {
 }
 
 func (cli *DockerCli) CmdSave(args ...string) error {
-	cmd := cli.Subcmd("save", "IMAGE DESTINATION", "Save an image to a tar archive")
+	cmd := cli.Subcmd("save", "IMAGE", "Save an image to a tar archive (streamed to stdout)")
 	if err := cmd.Parse(args); err != nil {
 		return err
 	}
@@ -2356,8 +2375,27 @@ func (cli *DockerCli) hijack(method, path string, setRawTerminal bool, in io.Rea
 
 	var receiveStdout chan error
 
+	var oldState *term.State
+
+	if in != nil && setRawTerminal && cli.isTerminal && os.Getenv("NORAW") == "" {
+		oldState, err = term.SetRawTerminal(cli.terminalFd)
+		if err != nil {
+			return err
+		}
+		defer term.RestoreTerminal(cli.terminalFd, oldState)
+	}
+
 	if stdout != nil {
 		receiveStdout = utils.Go(func() (err error) {
+			defer func() {
+				if in != nil {
+					if setRawTerminal && cli.isTerminal {
+						term.RestoreTerminal(cli.terminalFd, oldState)
+					}
+					in.Close()
+				}
+			}()
+
 			// When TTY is ON, use regular copy
 			if setRawTerminal {
 				_, err = io.Copy(stdout, br)
@@ -2367,14 +2405,6 @@ func (cli *DockerCli) hijack(method, path string, setRawTerminal bool, in io.Rea
 			utils.Debugf("[hijack] End of stdout")
 			return err
 		})
-	}
-
-	if in != nil && setRawTerminal && cli.isTerminal && os.Getenv("NORAW") == "" {
-		oldState, err := term.SetRawTerminal(cli.terminalFd)
-		if err != nil {
-			return err
-		}
-		defer term.RestoreTerminal(cli.terminalFd, oldState)
 	}
 
 	sendStdin := utils.Go(func() error {

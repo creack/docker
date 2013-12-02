@@ -3,19 +3,38 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
 type StreamFormatter struct {
+	sync.RWMutex
 	json bool
 	used bool
 }
 
 func NewStreamFormatter(json bool) *StreamFormatter {
-	return &StreamFormatter{json, false}
+	return &StreamFormatter{
+		json: json,
+	}
+}
+
+func (sf *StreamFormatter) setUsed() {
+	sf.Lock()
+	defer sf.Unlock()
+
+	sf.used = true
+}
+
+func (sf *StreamFormatter) Used() bool {
+	sf.RLock()
+	defer sf.RUnlock()
+
+	return sf.used
 }
 
 func (sf *StreamFormatter) FormatStatus(id, format string, a ...interface{}) []byte {
-	sf.used = true
+	sf.setUsed()
+
 	str := fmt.Sprintf(format, a...)
 	if sf.json {
 		b, err := json.Marshal(&JSONMessage{ID: id, Status: str})
@@ -28,7 +47,8 @@ func (sf *StreamFormatter) FormatStatus(id, format string, a ...interface{}) []b
 }
 
 func (sf *StreamFormatter) FormatError(err error) []byte {
-	sf.used = true
+	sf.setUsed()
+
 	if sf.json {
 		jsonError, ok := err.(*JSONError)
 		if !ok {
@@ -37,16 +57,17 @@ func (sf *StreamFormatter) FormatError(err error) []byte {
 		if b, err := json.Marshal(&JSONMessage{Error: jsonError, ErrorMessage: err.Error()}); err == nil {
 			return b
 		}
-		return []byte("{\"error\":\"format error\"}")
+		return []byte(`{"error":"format error"}`)
 	}
 	return []byte("Error: " + err.Error() + "\r\n")
 }
 
 func (sf *StreamFormatter) FormatProgress(id, action string, progress *JSONProgress) []byte {
+	sf.setUsed()
+
 	if progress == nil {
 		progress = &JSONProgress{}
 	}
-	sf.used = true
 	if sf.json {
 
 		b, err := json.Marshal(&JSONMessage{
@@ -65,8 +86,4 @@ func (sf *StreamFormatter) FormatProgress(id, action string, progress *JSONProgr
 		endl += "\n"
 	}
 	return []byte(action + " " + progress.String() + endl)
-}
-
-func (sf *StreamFormatter) Used() bool {
-	return sf.used
 }

@@ -1873,8 +1873,12 @@ func (srv *Server) HTTPRequestFactory(metaHeaders map[string][]string) *utils.HT
 }
 
 func (srv *Server) LogEvent(action, id, from string) *utils.JSONMessage {
-	now := time.Now().UTC().Unix()
-	jm := utils.JSONMessage{Status: action, ID: id, From: from, Time: now}
+	jm := utils.JSONMessage{
+		Status: action,
+		ID:     id,
+		From:   from,
+		Time:   time.Now().UTC().Unix(),
+	}
 	srv.AddEvent(jm)
 	for _, c := range srv.listeners {
 		select { // non blocking channel

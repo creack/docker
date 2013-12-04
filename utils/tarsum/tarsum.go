@@ -25,6 +25,13 @@ type TarSum struct {
 	first    bool
 }
 
+func New(r io.Reader, h hash.Hash) *TarSum {
+	return &TarSum{
+		Reader: r,
+		h:      h,
+	}
+}
+
 func (ts *TarSum) encodeHeader(h *tar.Header) error {
 	for _, elem := range [][2]string{
 		{"name", h.Name},
@@ -56,7 +63,9 @@ func (ts *TarSum) Read(buf []byte) (int, error) {
 		ts.tarR = tar.NewReader(ts.Reader)
 		ts.tarW = tar.NewWriter(ts.bufTar)
 		ts.gz = gzip.NewWriter(ts.bufGz)
-		ts.h = sha256.New()
+		if ts.h == nil {
+			ts.h = sha256.New()
+		}
 		ts.h.Reset()
 		ts.first = true
 	}
@@ -132,12 +141,13 @@ func (ts *TarSum) Read(buf []byte) (int, error) {
 
 func (ts *TarSum) Sum(extra []byte) string {
 	sort.Strings(ts.sums)
-	h := sha256.New()
+	ts.h.Reset()
 	if extra != nil {
-		h.Write(extra)
+		ts.h.Write(extra)
 	}
 	for _, sum := range ts.sums {
-		h.Write([]byte(sum))
+		ts.h.Write([]byte(sum))
 	}
-	return "tarsum+sha256:" + hex.EncodeToString(h.Sum(nil))
+	return string(ts.h.Sum(nil))
+	return "tarsum+sha256:" + hex.EncodeToString(ts.h.Sum(nil))
 }

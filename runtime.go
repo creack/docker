@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"code.google.com/p/go.crypto/openpgp"
 	_ "code.google.com/p/gosqlite/sqlite3" // registers sqlite
 	"container/list"
 	"database/sql"
@@ -12,6 +13,8 @@ import (
 	_ "github.com/dotcloud/docker/graphdriver/devmapper"
 	_ "github.com/dotcloud/docker/graphdriver/vfs"
 	"github.com/dotcloud/docker/utils"
+	"github.com/dotcloud/docker/utils/tarsign"
+	"github.com/dotcloud/docker/utils/tarsum"
 	"io"
 	"io/ioutil"
 	"log"
@@ -540,11 +543,32 @@ func (runtime *Runtime) Commit(container *Container, repository, tag, comment, a
 	if err != nil {
 		return nil, err
 	}
-	// Create a new image from the container's base layers + a new layer from container changes
-	img, err := runtime.graph.Create(rwTar, container, comment, author, config)
+
+	pass := []byte("psJOPU>-")
+	pass = nil
+
+	promptFct := func(keys []openpgp.Key, symetric bool) ([]byte, error) {
+		if pass == nil {
+			return nil, tarsign.ErrEncryptedKey
+		}
+		return nil, nil
+	}
+
+	signer, err := tarsign.New("CB6E3FF3", promptFct)
 	if err != nil {
 		return nil, err
 	}
+	test := tarsum.New(rwTar, signer)
+
+	// Create a new image from the container's base layers + a new layer from container changes
+	img, err := runtime.graph.Create(test, container, comment, author, config)
+	if err != nil {
+		fmt.Printf("__ %#v\n", err)
+		return nil, err
+	}
+
+	fmt.Printf("-----2-----> %s\n", test.Sum(nil))
+
 	// Register the image if needed
 	if repository != "" {
 		if err := runtime.repositories.Set(repository, tag, img.ID, true); err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/dotcloud/docker/registry"
 	"github.com/dotcloud/docker/utils"
 	"github.com/dotcloud/docker/utils/tarsign"
+	"github.com/dotcloud/docker/utils/tarsum"
 	"io"
 	"io/ioutil"
 	"log"
@@ -670,15 +671,23 @@ func (srv *Server) imageSign(name, gpgKey, password string) (*APISign, error) {
 
 	promptFct := func(keys []openpgp.Key, symetric bool) ([]byte, error) {
 		if password == "" {
-			return nil, ErrEncryptedKey
+			return nil, tarsign.ErrEncryptedKey
 		}
 		return []byte(password), nil
 	}
 
-	sign, err := tarsign.ArmoredSign(layer, gpgKey, promptFct)
+	s, err := tarsign.New(gpgKey, promptFct)
 	if err != nil {
 		return nil, err
 	}
+	signer := tarsum.New(layer, s)
+	io.Copy(ioutil.Discard, signer)
+	sign := signer.Sum(nil)
+
+	// sign, err := tarsign.ArmoredSign(layer, gpgKey, promptFct)
+	// if err != nil {
+	// 	return nil, err
+	// }
 	return &APISign{
 		GpgKey:           gpgKey,
 		ArmoredSignature: string(sign),
@@ -704,10 +713,6 @@ func (srv *Server) ImageSign(job *engine.Job) engine.Status {
 
 	return engine.StatusOK
 }
-
-var (
-	ErrEncryptedKey = errors.New("The private key is encrypted. Please provide the password.")
-)
 
 func (srv *Server) ContainerTop(name, psArgs string) (*APITop, error) {
 	if container := srv.runtime.Get(name); container != nil {

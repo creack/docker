@@ -4,14 +4,135 @@ import (
 	"bufio"
 	"bytes"
 	"code.google.com/p/go.crypto/openpgp"
+	"errors"
 	"fmt"
 	"github.com/dotcloud/docker/term"
-	"github.com/dotcloud/docker/utils/tarsum"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+var (
+	ErrWriteOnClose = errors.New("Write on closed hash")
+	ErrEncryptedKey = errors.New("The private key is encrypted. Please provide the password.")
+)
+
+type PGPSign struct {
+	sync.RWMutex
+	r          io.ReadCloser
+	w          io.WriteCloser
+	closed     bool
+	err        error
+	promptFct  openpgp.PromptFunction
+	result     chan []byte
+	gpgKey     string
+	privateKey *openpgp.Entity
+}
+
+func (ps *PGPSign) startSigner() error {
+	println("startSigner")
+
+	ps.RLock()
+	if ps.closed {
+		ps.RUnlock()
+		println("---44------>")
+		return ErrWriteOnClose
+	}
+	ps.RUnlock()
+
+	signature, err := ps.ArmoredSign(ps.r)
+	println("ARMOREDSIGN FINISHED")
+	if err != nil {
+		println("ERROR:", err.Error())
+		ps.Lock()
+		if !ps.closed {
+			println("closing chan")
+			close(ps.result)
+			println("chan closed")
+		}
+		ps.err = err
+		ps.closed = true
+		ps.Unlock()
+		return err
+	}
+
+	println("vvvvvvvvv")
+	ps.result <- signature
+	println("^^^^^^^^^")
+	return nil
+}
+
+func New(gpgKey string, promptFct openpgp.PromptFunction) (*PGPSign, error) {
+	if gpgKey == "" {
+		gpgKey = os.Getenv("GPGKEY")
+		if gpgKey == "" {
+			return nil, fmt.Errorf("Missing gpgKey")
+		}
+	}
+
+	if promptFct == nil {
+		promptFct = DefaultPromptFct
+	}
+
+	privateKey, err := EntityFromSecring(gpgKey, "")
+	if err != nil {
+		return nil, err
+	}
+
+	h := &PGPSign{
+		gpgKey:     gpgKey,
+		promptFct:  promptFct,
+		privateKey: privateKey,
+	}
+	h.r, h.w = io.Pipe()
+	h.result = make(chan []byte)
+	go h.startSigner()
+	return h, nil
+}
+
+func (ps *PGPSign) Write(buf []byte) (int, error) {
+	if ps.err != nil {
+		return 0, ps.err
+	}
+	if ps.closed {
+		return 0, ErrWriteOnClose
+	}
+	return ps.w.Write(buf)
+}
+
+func (ps *PGPSign) Sum(extra []byte) []byte {
+	if extra != nil {
+		if _, err := ps.w.Write(extra); err != nil {
+			return nil
+		}
+	}
+	ps.w.Close()
+	ps.r.Close()
+	ps.closed = true
+
+	return <-ps.result
+}
+
+func (ps *PGPSign) Reset() {
+	ps.w.Close()
+	ps.r.Close()
+
+	ps.closed = false
+	ps.err = nil
+	ps.r, ps.w = io.Pipe()
+
+	go ps.startSigner()
+}
+
+func (*PGPSign) Size() int {
+	return 0
+}
+
+func (*PGPSign) BlockSize() int {
+	return 0
+}
 
 func DefaultSecRingPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".gnupg", "secring.gpg")
@@ -60,70 +181,46 @@ func EntityFromSecring(keyId, keyFile string) (*openpgp.Entity, error) {
 
 func DefaultPromptFct(keys []openpgp.Key, symetric bool) ([]byte, error) {
 	print("Please enter passkey: ")
-	state, err := term.SaveState(0)
+	state, err := term.SaveState(os.Stdin.Fd())
 	if err != nil {
 		return nil, err
 	}
-	if err := term.DisableEcho(0, state); err != nil {
+	if err := term.DisableEcho(os.Stdin.Fd(), state); err != nil {
 		return nil, err
 	}
-	defer term.RestoreTerminal(0, state)
+	defer term.RestoreTerminal(os.Stdin.Fd(), state)
 
 	code, _, err := bufio.NewReader(os.Stdin).ReadLine()
 	if err != nil {
 		return nil, err
 	}
-	term.RestoreTerminal(0, state)
+	term.RestoreTerminal(os.Stdin.Fd(), state)
 	println()
 
 	return code, nil
 }
 
-func ArmoredSign(src io.Reader, gpgKey string, promptFct openpgp.PromptFunction) ([]byte, error) {
-	if gpgKey == "" {
-		gpgKey = os.Getenv("GPGKEY")
-		if gpgKey == "" {
-			return nil, fmt.Errorf("Missing gpgKey")
-		}
-	}
-
-	privateKey, err := EntityFromSecring(gpgKey, "")
-	if err != nil {
-		return nil, err
-	}
-
-	if privateKey.PrivateKey.Encrypted {
-		if promptFct == nil {
-			promptFct = DefaultPromptFct
-		}
-
-		code, err := promptFct([]openpgp.Key{
+func (ps *PGPSign) ArmoredSign(src io.Reader) ([]byte, error) {
+	if ps.privateKey.PrivateKey.Encrypted {
+		code, err := ps.promptFct([]openpgp.Key{
 			openpgp.Key{
-				Entity:     privateKey,
-				PublicKey:  privateKey.PrimaryKey,
-				PrivateKey: privateKey.PrivateKey,
+				Entity:     ps.privateKey,
+				PublicKey:  ps.privateKey.PrimaryKey,
+				PrivateKey: ps.privateKey.PrivateKey,
 			},
 		}, false)
 		if err != nil {
 			return nil, err
 		}
-		if err := privateKey.PrivateKey.Decrypt(code); err != nil {
+		if err := ps.privateKey.PrivateKey.Decrypt(code); err != nil {
 			return nil, err
 		}
 	}
 
 	var sign bytes.Buffer
-	if err := openpgp.ArmoredDetachSign(&sign, privateKey, src, nil); err != nil {
+	if err := openpgp.ArmoredDetachSign(&sign, ps.privateKey, src, nil); err != nil {
 		return nil, err
 	}
 
 	return sign.Bytes(), nil
-}
-
-func TarSign(src io.Reader) error {
-	src = &tarsum.TarSum{Reader: src}
-	if src == nil {
-		return fmt.Errorf("No source")
-	}
-	return nil
 }

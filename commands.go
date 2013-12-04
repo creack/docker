@@ -164,13 +164,17 @@ func MkBuildContext(dockerfile string, files [][2]string) (archive.Archive, erro
 }
 
 func (cli *DockerCli) CmdSign(args ...string) error {
-	cmd := cli.Subcmd("sign", "IMAGE [IMAGE...]", "Sign an image with your GPG Key")
+	cmd := cli.Subcmd("sign", "[OPTIONS] IMAGE [IMAGE...]", "Sign an image with your GPG Key")
+	verify := cmd.String("verify", "", "File containing pgp key to be compared with")
 	if err := cmd.Parse(args); err != nil {
 		return nil
 	}
 	if cmd.NArg() < 1 {
 		cmd.Usage()
 		return nil
+	}
+	if *verify != "" && cmd.NArg() > 1 {
+		return fmt.Errorf("Can't verify signature on more than one image at a time")
 	}
 
 	v := &url.Values{}

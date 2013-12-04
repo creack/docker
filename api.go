@@ -10,6 +10,7 @@ import (
 	"github.com/dotcloud/docker/archive"
 	"github.com/dotcloud/docker/auth"
 	"github.com/dotcloud/docker/utils"
+	"github.com/dotcloud/docker/utils/tarsign"
 	"github.com/gorilla/mux"
 	"io"
 	"io/ioutil"
@@ -706,7 +707,7 @@ func postImageSign(srv *Server, version float64, w http.ResponseWriter, r *http.
 	cErr := utils.Go(func() error {
 		if err := job.Run(); err != nil {
 			// FIXME: improve the engine to support 'err == io.EOF' format
-			if err.Error() == job.Name+": "+ErrEncryptedKey.Error() {
+			if err.Error() == job.Name+": "+tarsign.ErrEncryptedKey.Error() {
 				w.WriteHeader(http.StatusUnauthorized)
 				return nil
 			}

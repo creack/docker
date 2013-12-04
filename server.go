@@ -663,16 +663,7 @@ func (srv *Server) imageSign(name, gpgKey, password string) (*APISign, error) {
 		return nil, err
 	}
 
-	config := &Config{
-		Image: image.ID,
-		Cmd:   []string{"/bin/sh", "-c", "(nop) pgp sign"},
-	}
-	container, _, err := srv.runtime.Create(config, "")
-	if err != nil {
-		return nil, err
-	}
-
-	rwTar, err := container.ExportRw()
+	layer, err := image.TarLayer()
 	if err != nil {
 		return nil, err
 	}
@@ -684,7 +675,7 @@ func (srv *Server) imageSign(name, gpgKey, password string) (*APISign, error) {
 		return []byte(password), nil
 	}
 
-	sign, err := tarsign.ArmoredSign(rwTar, gpgKey, promptFct)
+	sign, err := tarsign.ArmoredSign(layer, gpgKey, promptFct)
 	if err != nil {
 		return nil, err
 	}

@@ -105,6 +105,11 @@ type (
 		StatusCode int
 	}
 
+	APISign struct {
+		GpgKey           string
+		ArmoredSignature string
+	}
+
 	APIAuth struct {
 		Status string
 	}

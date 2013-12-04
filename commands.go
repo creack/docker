@@ -14,6 +14,7 @@ import (
 	"github.com/dotcloud/docker/registry"
 	"github.com/dotcloud/docker/term"
 	"github.com/dotcloud/docker/utils"
+	"github.com/dotcloud/docker/utils/tarsign"
 	"io"
 	"io/ioutil"
 	"net"
@@ -107,6 +108,7 @@ func (cli *DockerCli) CmdHelp(args ...string) error {
 		{"save", "Save an image to a tar archive"},
 		{"search", "Search for an image in the docker index"},
 		{"start", "Start a stopped container"},
+		{"sign", "Sign an image with your GPG Key"},
 		{"stop", "Stop a running container"},
 		{"tag", "Tag an image into a repository"},
 		{"top", "Lookup the running processes of a container"},
@@ -159,6 +161,52 @@ func MkBuildContext(dockerfile string, files [][2]string) (archive.Archive, erro
 		return nil, err
 	}
 	return buf, nil
+}
+
+func (cli *DockerCli) CmdSign(args ...string) error {
+	cmd := cli.Subcmd("sign", "IMAGE [IMAGE...]", "Sign an image with your GPG Key")
+	if err := cmd.Parse(args); err != nil {
+		return nil
+	}
+	if cmd.NArg() < 1 {
+		cmd.Usage()
+		return nil
+	}
+
+	v := &url.Values{}
+	v.Add("GPGKEY", os.Getenv("GPGKEY"))
+	var encounteredError error
+	for _, name := range cmd.Args() {
+		body, statusCode, err := cli.call("POST", "/images/"+name+"/sign?"+v.Encode(), nil)
+		if err != nil {
+			if statusCode == 401 {
+				// FIXME: We send the typed password in clear through the socket.
+				// we need to find a safer way.
+				password, er := tarsign.DefaultPromptFct(nil, false)
+				if er != nil {
+					encounteredError = fmt.Errorf("Error: failed to sign one or more containers")
+					fmt.Fprintf(cli.err, "%s\n", err)
+					continue
+				}
+				body, _, er = cli.call("POST", "/images/"+name+"/sign?"+v.Encode(), map[string]string{"password": string(password)})
+				if er != nil {
+					encounteredError = fmt.Errorf("Error: failed to sign one or more containers")
+				}
+			} else {
+				encounteredError = fmt.Errorf("Error: failed to sign one or more containers")
+				fmt.Fprintf(cli.err, "%s\n", err)
+			}
+		}
+		apiSign := &APISign{}
+		if err := json.Unmarshal(body, apiSign); err != nil {
+			return err
+		}
+		fmt.Printf("%s\n", apiSign.ArmoredSignature)
+	}
+	if encounteredError != nil {
+		return encounteredError
+	}
+	return nil
 }
 
 func (cli *DockerCli) CmdBuild(args ...string) error {

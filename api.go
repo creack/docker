@@ -683,6 +683,54 @@ func postContainersStart(srv *Server, version float64, w http.ResponseWriter, r 
 	return nil
 }
 
+func postImageSign(srv *Server, version float64, w http.ResponseWriter, r *http.Request, vars map[string]string) (err error) {
+	if err := parseForm(r); err != nil {
+		return err
+	}
+	if vars == nil {
+		return fmt.Errorf("Missing parameter")
+	}
+	name := vars["name"]
+	gpgKey := r.Form.Get("GPGKEY")
+
+	job := srv.Eng.Job("sign")
+	job.DecodeEnv(r.Body) // "password" there
+	job.Setenv("imageName", name)
+	job.Setenv("gpgKey", gpgKey)
+
+	re, err := job.Stdout.AddPipe()
+	if err != nil {
+		return err
+	}
+
+	cErr := utils.Go(func() error {
+		if err := job.Run(); err != nil {
+			// FIXME: improve the engine to support 'err == io.EOF' format
+			if err.Error() == job.Name+": "+ErrEncryptedKey.Error() {
+				w.WriteHeader(http.StatusUnauthorized)
+				return nil
+			}
+			return err
+		}
+		return nil
+	})
+
+	apiSign := &APISign{}
+	if err := json.NewDecoder(re).Decode(apiSign); err != nil {
+		// FIXME: find a better way to handle error with engin
+		if er := <-cErr; er != nil {
+			return er
+		}
+		return err
+	}
+
+	if err := <-cErr; err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, apiSign)
+}
+
 func postContainersStop(srv *Server, version float64, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
@@ -1105,6 +1153,7 @@ func createRouter(srv *Server, logging bool) (*mux.Router, error) {
 			"/images/{name:.*}/insert":      postImagesInsert,
 			"/images/load":                  postImagesLoad,
 			"/images/{name:.*}/push":        postImagesPush,
+			"/images/{name:.*}/sign":        postImageSign,
 			"/images/{name:.*}/tag":         postImagesTag,
 			"/containers/create":            postContainersCreate,
 			"/containers/{name:.*}/kill":    postContainersKill,

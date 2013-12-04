@@ -35,7 +35,7 @@ func (o *Output) Add(dst io.Writer) error {
 // and returns its reading end for consumption by the caller.
 // This is a rough equivalent similar to Cmd.StdoutPipe() in the standard os/exec package.
 // This method is thread-safe.
-func (o *Output) AddPipe() (io.Reader, error) {
+func (o *Output) AddPipe() (io.ReadCloser, error) {
 	r, w := io.Pipe()
 	o.Add(w)
 	return r, nil

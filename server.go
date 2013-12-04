@@ -2,6 +2,7 @@ package docker
 
 import (
 	"bufio"
+	"code.google.com/p/go.crypto/openpgp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/dotcloud/docker/graphdb"
 	"github.com/dotcloud/docker/registry"
 	"github.com/dotcloud/docker/utils"
+	"github.com/dotcloud/docker/utils/tarsign"
 	"io"
 	"io/ioutil"
 	"log"
@@ -75,6 +77,10 @@ func jobInitApi(job *engine.Job) engine.Status {
 		return engine.StatusErr
 	}
 	if err := job.Eng.Register("start", srv.ContainerStart); err != nil {
+		job.Error(err)
+		return engine.StatusErr
+	}
+	if err := job.Eng.Register("sign", srv.ImageSign); err != nil {
 		job.Error(err)
 		return engine.StatusErr
 	}
@@ -650,6 +656,67 @@ func (srv *Server) ImageHistory(name string) ([]APIHistory, error) {
 	return outs, nil
 
 }
+
+func (srv *Server) imageSign(name, gpgKey, password string) (*APISign, error) {
+	image, err := srv.runtime.repositories.LookupImage(name)
+	if err != nil {
+		return nil, err
+	}
+
+	config := &Config{
+		Image: image.ID,
+		Cmd:   []string{"/bin/sh", "-c", "(nop) pgp sign"},
+	}
+	container, _, err := srv.runtime.Create(config, "")
+	if err != nil {
+		return nil, err
+	}
+
+	rwTar, err := container.ExportRw()
+	if err != nil {
+		return nil, err
+	}
+
+	promptFct := func(keys []openpgp.Key, symetric bool) ([]byte, error) {
+		if password == "" {
+			return nil, ErrEncryptedKey
+		}
+		return []byte(password), nil
+	}
+
+	sign, err := tarsign.ArmoredSign(rwTar, gpgKey, promptFct)
+	if err != nil {
+		return nil, err
+	}
+	return &APISign{
+		GpgKey:           gpgKey,
+		ArmoredSignature: string(sign),
+	}, nil
+}
+
+func (srv *Server) ImageSign(job *engine.Job) engine.Status {
+	var (
+		name     = job.Getenv("imageName")
+		gpgKey   = job.Getenv("gpgKey")
+		password = job.Getenv("password")
+	)
+	sign, err := srv.imageSign(name, gpgKey, password)
+	if err != nil {
+		job.Error(err)
+		return engine.StatusErr
+	}
+
+	if err := json.NewEncoder(job.Stdout).Encode(sign); err != nil {
+		job.Error(err)
+		return engine.StatusErr
+	}
+
+	return engine.StatusOK
+}
+
+var (
+	ErrEncryptedKey = errors.New("The private key is encrypted. Please provide the password.")
+)
 
 func (srv *Server) ContainerTop(name, psArgs string) (*APITop, error) {
 	if container := srv.runtime.Get(name); container != nil {

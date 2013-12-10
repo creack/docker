@@ -31,19 +31,20 @@ const MaxImageDepth = 42
 var defaultDns = []string{"8.8.8.8", "8.8.4.4"}
 
 type Runtime struct {
-	repository     string
-	sysInitPath    string
-	containers     *list.List
-	networkManager *NetworkManager
-	graph          *Graph
-	repositories   *TagStore
-	idIndex        *utils.TruncIndex
-	capabilities   *execdriver.Capabilities
-	volumes        *Graph
-	srv            *Server
-	config         *DaemonConfig
-	containerGraph *graphdb.Database
-	driver         graphdriver.Driver
+	repository      string
+	sysInitPath     string
+	containers      *list.List
+	networkManager  *NetworkManager
+	graph           *Graph
+	repositories    *TagStore
+	idIndex         *utils.TruncIndex
+	capabilities    *execdriver.Capabilities
+	volumes         *Graph
+	srv             *Server
+	config          *DaemonConfig
+	containerGraph  *graphdb.Database
+	driver          graphdriver.Driver
+	executionDriver execdriver.Driver
 }
 
 // List returns an array of all containers registered in the runtime.
@@ -138,8 +139,6 @@ func (runtime *Runtime) Register(container *Container) error {
 	// done
 	runtime.containers.PushBack(container)
 	runtime.idIndex.Add(container.ID)
-
-	//	container.lxc = chroot.New(container.root, container.stdin, container.stdinPipe, container.stdout, container.stderr)
 
 	// FIXME: if the container is supposed to be running but is not, auto restart it?
 	//        if so, then we need to restart monitor and init a new lock
@@ -469,7 +468,7 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 		Name:        name,
 		Driver:      runtime.driver.String(),
 		root:        runtime.containerRoot(id),
-		process:     lxc.New(runtime.containerRoot(id), entrypoint, args),
+		process:     runtime.executionDriver.New(runtime.containerRoot(id), entrypoint, args),
 	}
 
 	// Step 1: create the container directory.
@@ -661,9 +660,6 @@ func NewRuntimeFromDirectory(config *DaemonConfig) (*Runtime, error) {
 		}
 	}
 
-	if err := linkLxcStart(config.Root); err != nil {
-		return nil, err
-	}
 	g, err := NewGraph(path.Join(config.Root, "graph"), driver)
 	if err != nil {
 		return nil, err
@@ -729,19 +725,22 @@ func NewRuntimeFromDirectory(config *DaemonConfig) (*Runtime, error) {
 		}
 	}
 
+	capabilities := &execdriver.Capabilities{}
+
 	runtime := &Runtime{
-		repository:     runtimeRepo,
-		containers:     list.New(),
-		networkManager: netManager,
-		graph:          g,
-		repositories:   repositories,
-		idIndex:        utils.NewTruncIndex(),
-		capabilities:   &execdriver.Capabilities{},
-		volumes:        volumes,
-		config:         config,
-		containerGraph: graph,
-		driver:         driver,
-		sysInitPath:    sysInitPath,
+		repository:      runtimeRepo,
+		containers:      list.New(),
+		networkManager:  netManager,
+		graph:           g,
+		repositories:    repositories,
+		idIndex:         utils.NewTruncIndex(),
+		capabilities:    capabilities,
+		volumes:         volumes,
+		config:          config,
+		containerGraph:  graph,
+		driver:          driver,
+		sysInitPath:     sysInitPath,
+		executionDriver: lxc.NewLxcDriver(config.Root, capabilities),
 	}
 
 	if err := runtime.restore(); err != nil {

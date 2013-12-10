@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/dotcloud/docker/archive"
+	"github.com/dotcloud/docker/execdriver/chroot"
+	"github.com/dotcloud/docker/execdriver/lxc"
 	"github.com/dotcloud/docker/graphdb"
 	"github.com/dotcloud/docker/graphdriver"
 	"github.com/dotcloud/docker/graphdriver/aufs"
@@ -140,6 +142,7 @@ func (runtime *Runtime) Register(container *Container) error {
 	// Attach to stdout and stderr
 	container.stderr = utils.NewWriteBroadcaster()
 	container.stdout = utils.NewWriteBroadcaster()
+
 	// Attach to stdin
 	if container.Config.OpenStdin {
 		container.stdin, container.stdinPipe = io.Pipe()
@@ -149,6 +152,11 @@ func (runtime *Runtime) Register(container *Container) error {
 	// done
 	runtime.containers.PushBack(container)
 	runtime.idIndex.Add(container.ID)
+
+	p := lxc.New(container.root, container.stdin, container.stdinPipe, container.stdout, container.stderr)
+	container.lxc = p
+
+	container.lxc = chroot.New(container.root, container.stdin, container.stdinPipe, container.stdout, container.stderr)
 
 	// FIXME: if the container is supposed to be running but is not, auto restart it?
 	//        if so, then we need to restart monitor and init a new lock
@@ -183,7 +191,7 @@ func (runtime *Runtime) Register(container *Container) error {
 
 			container.waitLock = make(chan struct{})
 
-			go container.monitor()
+			//			go container.monitor()
 		}
 	}
 	return nil
@@ -256,6 +264,7 @@ func (runtime *Runtime) Destroy(container *Container) error {
 }
 
 func (runtime *Runtime) restore() error {
+	return nil
 	wheel := "-\\|/"
 	if os.Getenv("DEBUG") == "" && os.Getenv("TEST") == "" {
 		fmt.Printf("Loading containers:  ")

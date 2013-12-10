@@ -738,7 +738,7 @@ func createAPIContainer(names []string, container *Container, size bool, runtime
 	}
 	c.Names = names
 	c.Image = runtime.repositories.ImageName(container.Image)
-	c.Command = fmt.Sprintf("%s %s", container.Path, strings.Join(container.Args, " "))
+	//	c.Command = fmt.Sprintf("%s %s", container.Path, strings.Join(container.Args, " "))
 	c.Created = container.Created.Unix()
 	c.Status = container.State.String()
 	c.Ports = container.NetworkSettings.PortMappingAPI()

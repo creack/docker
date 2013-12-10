@@ -413,7 +413,7 @@ func (b *buildFile) run() (string, error) {
 
 	// override the entry point that may have been picked up from the base image
 	c.Path = b.config.Cmd[0]
-	c.Args = b.config.Cmd[1:]
+	//	c.Args = b.config.Cmd[1:]
 
 	var errCh chan error
 

@@ -111,9 +111,12 @@ func SysInit() {
 		fmt.Println("You should not invoke dockerinit manually")
 		os.Exit(1)
 	}
-	var u = flag.String("u", "", "username or uid")
-	var gw = flag.String("g", "", "gateway address")
-	var workdir = flag.String("w", "", "workdir")
+
+	var (
+		u       = flag.String("u", "", "username or uid")
+		gw      = flag.String("g", "", "gateway address")
+		workdir = flag.String("w", "", "workdir")
+	)
 
 	flag.Parse()
 

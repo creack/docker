@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"github.com/dotcloud/docker/archive"
 	"github.com/dotcloud/docker/execdriver"
-	"github.com/dotcloud/docker/execdriver/lxc"
+	_ "github.com/dotcloud/docker/execdriver/chroot"
+	_ "github.com/dotcloud/docker/execdriver/lxc"
 	"github.com/dotcloud/docker/graphdb"
 	"github.com/dotcloud/docker/graphdriver"
 	"github.com/dotcloud/docker/graphdriver/aufs"
@@ -15,7 +16,6 @@ import (
 	_ "github.com/dotcloud/docker/graphdriver/vfs"
 	"github.com/dotcloud/docker/utils"
 	"io/ioutil"
-	"log"
 	"os"
 	"os/exec"
 	"path"
@@ -38,7 +38,6 @@ type Runtime struct {
 	graph           *Graph
 	repositories    *TagStore
 	idIndex         *utils.TruncIndex
-	capabilities    *execdriver.Capabilities
 	volumes         *Graph
 	srv             *Server
 	config          *DaemonConfig
@@ -315,43 +314,6 @@ func (runtime *Runtime) restore() error {
 	return nil
 }
 
-// FIXME: comment please!
-func (runtime *Runtime) UpdateCapabilities(quiet bool) {
-	if cgroupMemoryMountpoint, err := utils.FindCgroupMountpoint("memory"); err != nil {
-		if !quiet {
-			log.Printf("WARNING: %s\n", err)
-		}
-	} else {
-		_, err1 := ioutil.ReadFile(path.Join(cgroupMemoryMountpoint, "memory.limit_in_bytes"))
-		_, err2 := ioutil.ReadFile(path.Join(cgroupMemoryMountpoint, "memory.soft_limit_in_bytes"))
-		runtime.capabilities.MemoryLimit = err1 == nil && err2 == nil
-		if !runtime.capabilities.MemoryLimit && !quiet {
-			log.Printf("WARNING: Your kernel does not support cgroup memory limit.")
-		}
-
-		_, err = ioutil.ReadFile(path.Join(cgroupMemoryMountpoint, "memory.memsw.limit_in_bytes"))
-		runtime.capabilities.SwapLimit = err == nil
-		if !runtime.capabilities.SwapLimit && !quiet {
-			log.Printf("WARNING: Your kernel does not support cgroup swap limit.")
-		}
-	}
-
-	content, err3 := ioutil.ReadFile("/proc/sys/net/ipv4/ip_forward")
-	runtime.capabilities.IPv4ForwardingDisabled = err3 != nil || len(content) == 0 || content[0] != '1'
-	if runtime.capabilities.IPv4ForwardingDisabled && !quiet {
-		log.Printf("WARNING: IPv4 forwarding is disabled.")
-	}
-
-	// Check if AppArmor seems to be enabled on this system.
-	if _, err := os.Stat("/sys/kernel/security/apparmor"); os.IsNotExist(err) {
-		utils.Debugf("/sys/kernel/security/apparmor not found; assuming AppArmor is not enabled.")
-		runtime.capabilities.AppArmor = false
-	} else {
-		utils.Debugf("/sys/kernel/security/apparmor found; assuming AppArmor is enabled.")
-		runtime.capabilities.AppArmor = true
-	}
-}
-
 // Create creates a new container from the given configuration with a given name.
 func (runtime *Runtime) Create(config *Config, name string) (*Container, []string, error) {
 	// Lookup image
@@ -626,17 +588,7 @@ func (runtime *Runtime) RegisterLink(parent, child *Container, alias string) err
 	return nil
 }
 
-// FIXME: harmonize with NewGraph()
 func NewRuntime(config *DaemonConfig) (*Runtime, error) {
-	runtime, err := NewRuntimeFromDirectory(config)
-	if err != nil {
-		return nil, err
-	}
-	runtime.UpdateCapabilities(false)
-	return runtime, nil
-}
-
-func NewRuntimeFromDirectory(config *DaemonConfig) (*Runtime, error) {
 
 	// Set the default driver
 	graphdriver.DefaultDriver = config.GraphDriver
@@ -671,6 +623,7 @@ func NewRuntimeFromDirectory(config *DaemonConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	volumes, err := NewGraph(path.Join(config.Root, "volumes"), volumesDriver)
 	if err != nil {
 		return nil, err
@@ -679,6 +632,7 @@ func NewRuntimeFromDirectory(config *DaemonConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Couldn't create Tag store: %s", err)
 	}
+
 	if config.BridgeIface == "" {
 		config.BridgeIface = DefaultNetworkBridge
 	}
@@ -725,7 +679,10 @@ func NewRuntimeFromDirectory(config *DaemonConfig) (*Runtime, error) {
 		}
 	}
 
-	capabilities := &execdriver.Capabilities{}
+	execDriver, err := execdriver.New(config.ExecDriver, config.Root)
+	if err != nil {
+		return nil, err
+	}
 
 	runtime := &Runtime{
 		repository:      runtimeRepo,
@@ -734,13 +691,12 @@ func NewRuntimeFromDirectory(config *DaemonConfig) (*Runtime, error) {
 		graph:           g,
 		repositories:    repositories,
 		idIndex:         utils.NewTruncIndex(),
-		capabilities:    capabilities,
 		volumes:         volumes,
 		config:          config,
 		containerGraph:  graph,
 		driver:          driver,
 		sysInitPath:     sysInitPath,
-		executionDriver: lxc.NewLxcDriver(config.Root, capabilities),
+		executionDriver: execDriver,
 	}
 
 	if err := runtime.restore(); err != nil {

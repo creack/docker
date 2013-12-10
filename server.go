@@ -8,6 +8,7 @@ import (
 	"github.com/dotcloud/docker/archive"
 	"github.com/dotcloud/docker/auth"
 	"github.com/dotcloud/docker/engine"
+	"github.com/dotcloud/docker/execdriver"
 	"github.com/dotcloud/docker/graphdb"
 	"github.com/dotcloud/docker/registry"
 	"github.com/dotcloud/docker/utils"
@@ -452,7 +453,7 @@ func (srv *Server) ImageInsert(name, url, path string, out io.Writer, sf *utils.
 	}
 	defer file.Body.Close()
 
-	config, _, _, err := ParseRun([]string{img.ID, "echo", "insert", url, path}, srv.runtime.capabilities)
+	config, _, _, err := ParseRun([]string{img.ID, "echo", "insert", url, path})
 	if err != nil {
 		return err
 	}
@@ -604,14 +605,16 @@ func (srv *Server) DockerInfo() *APIInfo {
 		kernelVersion = kv.String()
 	}
 
+	capabilities := execdriver.GetCapabilities()
+
 	return &APIInfo{
 		Containers:         len(srv.runtime.List()),
 		Images:             imgcount,
 		Driver:             srv.runtime.driver.String(),
 		DriverStatus:       srv.runtime.driver.Status(),
-		MemoryLimit:        srv.runtime.capabilities.MemoryLimit,
-		SwapLimit:          srv.runtime.capabilities.SwapLimit,
-		IPv4Forwarding:     !srv.runtime.capabilities.IPv4ForwardingDisabled,
+		MemoryLimit:        capabilities.MemoryLimit,
+		SwapLimit:          capabilities.SwapLimit,
+		IPv4Forwarding:     !capabilities.IPv4ForwardingDisabled,
 		Debug:              os.Getenv("DEBUG") != "",
 		NFd:                utils.GetTotalUsedFds(),
 		NGoroutines:        runtime.NumGoroutine(),
@@ -1299,10 +1302,13 @@ func (srv *Server) ContainerCreate(job *engine.Job) engine.Status {
 		job.Errorf("Minimum memory limit allowed is 512k")
 		return engine.StatusErr
 	}
-	if config.Memory > 0 && !srv.runtime.capabilities.MemoryLimit {
+
+	capabilities := execdriver.GetCapabilities()
+
+	if config.Memory > 0 && !capabilities.MemoryLimit {
 		config.Memory = 0
 	}
-	if config.Memory > 0 && !srv.runtime.capabilities.SwapLimit {
+	if config.Memory > 0 && !capabilities.SwapLimit {
 		config.MemorySwap = -1
 	}
 	container, buildWarnings, err := srv.runtime.Create(&config, name)
@@ -1383,7 +1389,6 @@ func (srv *Server) ContainerDestroy(name string, removeVolume, removeLink bool) 
 			return fmt.Errorf("Impossible to remove a running container, please stop it first")
 		}
 		volumes := make(map[string]struct{})
-
 		binds := make(map[string]struct{})
 
 		for _, bind := range container.hostConfig.Binds {

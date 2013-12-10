@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"github.com/dotcloud/docker/archive"
 	"github.com/dotcloud/docker/auth"
-	"github.com/dotcloud/docker/execdriver"
 	"github.com/dotcloud/docker/registry"
 	"github.com/dotcloud/docker/term"
 	"github.com/dotcloud/docker/utils"
@@ -1687,14 +1686,14 @@ func (cli *DockerCli) CmdTag(args ...string) error {
 }
 
 //FIXME Only used in tests
-func ParseRun(args []string, capabilities *execdriver.Capabilities) (*Config, *HostConfig, *flag.FlagSet, error) {
+func ParseRun(args []string) (*Config, *HostConfig, *flag.FlagSet, error) {
 	cmd := flag.NewFlagSet("run", flag.ContinueOnError)
 	cmd.SetOutput(ioutil.Discard)
 	cmd.Usage = nil
-	return parseRun(cmd, args, capabilities)
+	return parseRun(cmd, args)
 }
 
-func parseRun(cmd *flag.FlagSet, args []string, capabilities *execdriver.Capabilities) (*Config, *HostConfig, *flag.FlagSet, error) {
+func parseRun(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSet, error) {
 	var (
 		// FIXME: use utils.ListOpts for attach and volumes?
 		flAttach  = NewListOpts(ValidateAttach)
@@ -1741,11 +1740,6 @@ func parseRun(cmd *flag.FlagSet, args []string, capabilities *execdriver.Capabil
 
 	if err := cmd.Parse(args); err != nil {
 		return nil, nil, cmd, err
-	}
-
-	// Check if the kernel supports memory limit cgroup.
-	if capabilities != nil && *flMemoryString != "" && !capabilities.MemoryLimit {
-		*flMemoryString = ""
 	}
 
 	// Validate input params
@@ -1874,11 +1868,6 @@ func parseRun(cmd *flag.FlagSet, args []string, capabilities *execdriver.Capabil
 		PublishAllPorts: *flPublishAll,
 	}
 
-	if capabilities != nil && flMemory > 0 && !capabilities.SwapLimit {
-		//fmt.Fprintf(stdout, "WARNING: Your kernel does not support swap limit capabilities. Limitation discarded.\n")
-		config.MemorySwap = -1
-	}
-
 	// When allocating stdin in attached mode, close stdin at client disconnect
 	if config.OpenStdin && config.AttachStdin {
 		config.StdinOnce = true
@@ -1887,7 +1876,7 @@ func parseRun(cmd *flag.FlagSet, args []string, capabilities *execdriver.Capabil
 }
 
 func (cli *DockerCli) CmdRun(args ...string) error {
-	config, hostConfig, cmd, err := parseRun(cli.Subcmd("run", "[OPTIONS] IMAGE [COMMAND] [ARG...]", "Run a command in a new container"), args, nil)
+	config, hostConfig, cmd, err := parseRun(cli.Subcmd("run", "[OPTIONS] IMAGE [COMMAND] [ARG...]", "Run a command in a new container"), args)
 	if err != nil {
 		return err
 	}

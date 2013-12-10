@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/dotcloud/docker/archive"
 	"github.com/dotcloud/docker/auth"
+	"github.com/dotcloud/docker/execdriver"
 	"github.com/dotcloud/docker/systemd"
 	"github.com/dotcloud/docker/utils"
 	"github.com/gorilla/mux"
@@ -581,16 +582,19 @@ func postContainersCreate(srv *Server, version float64, w http.ResponseWriter, r
 	for scanner.Scan() {
 		out.Warnings = append(out.Warnings, scanner.Text())
 	}
-	if job.GetenvInt("Memory") > 0 && !srv.runtime.capabilities.MemoryLimit {
+
+	capabilities := execdriver.GetCapabilities()
+
+	if job.GetenvInt("Memory") > 0 && !capabilities.MemoryLimit {
 		log.Println("WARNING: Your kernel does not support memory limit capabilities. Limitation discarded.")
 		out.Warnings = append(out.Warnings, "Your kernel does not support memory limit capabilities. Limitation discarded.")
 	}
-	if job.GetenvInt("Memory") > 0 && !srv.runtime.capabilities.SwapLimit {
+	if job.GetenvInt("Memory") > 0 && !capabilities.SwapLimit {
 		log.Println("WARNING: Your kernel does not support swap limit capabilities. Limitation discarded.")
 		out.Warnings = append(out.Warnings, "Your kernel does not support memory swap capabilities. Limitation discarded.")
 	}
 
-	if !job.GetenvBool("NetworkDisabled") && srv.runtime.capabilities.IPv4ForwardingDisabled {
+	if !job.GetenvBool("NetworkDisabled") && capabilities.IPv4ForwardingDisabled {
 		log.Println("Warning: IPv4 forwarding is disabled.")
 		out.Warnings = append(out.Warnings, "IPv4 forwarding is disabled.")
 	}

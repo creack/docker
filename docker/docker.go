@@ -38,6 +38,7 @@ func main() {
 		flDefaultIp          = flag.String("ip", "0.0.0.0", "Default IP address to use when binding container ports")
 		flInterContainerComm = flag.Bool("icc", true, "Enable inter-container communication")
 		flGraphDriver        = flag.String("s", "", "Force the docker runtime to use a specific storage driver")
+		flExecDriver         = flag.String("x", "", "Force the docker runtime to use specific execution driver")
 		flHosts              = docker.NewListOpts(docker.ValidateHost)
 	)
 	flag.Var(&flDns, "dns", "Force docker to use specific DNS servers")
@@ -70,6 +71,7 @@ func main() {
 		}
 		// Load plugin: httpapi
 		job := eng.Job("initapi")
+
 		job.Setenv("Pidfile", *pidfile)
 		job.Setenv("Root", *flRoot)
 		job.SetenvBool("AutoRestart", *flAutoRestart)
@@ -80,6 +82,8 @@ func main() {
 		job.Setenv("DefaultIp", *flDefaultIp)
 		job.SetenvBool("InterContainerCommunication", *flInterContainerComm)
 		job.Setenv("GraphDriver", *flGraphDriver)
+		job.Setenv("ExecDriver", *flExecDriver)
+
 		if err := job.Run(); err != nil {
 			log.Fatal(err)
 		}

@@ -563,28 +563,6 @@ func CompareKernelVersion(a, b *KernelVersionInfo) int {
 	return 0
 }
 
-func FindCgroupMountpoint(cgroupType string) (string, error) {
-	output, err := ioutil.ReadFile("/proc/mounts")
-	if err != nil {
-		return "", err
-	}
-
-	// /proc/mounts has 6 fields per line, one mount per line, e.g.
-	// cgroup /sys/fs/cgroup/devices cgroup rw,relatime,devices 0 0
-	for _, line := range strings.Split(string(output), "\n") {
-		parts := strings.Split(line, " ")
-		if len(parts) == 6 && parts[2] == "cgroup" {
-			for _, opt := range strings.Split(parts[3], ",") {
-				if opt == cgroupType {
-					return parts[1], nil
-				}
-			}
-		}
-	}
-
-	return "", fmt.Errorf("cgroup mountpoint not found for %s", cgroupType)
-}
-
 func GetKernelVersion() (*KernelVersionInfo, error) {
 	var (
 		err error

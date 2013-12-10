@@ -13,9 +13,23 @@ import (
 	"syscall"
 )
 
+type Driver struct {
+}
+
+const DriverName = "chroot"
+
+func init() {
+	execdriver.Drivers[DriverName] = NewChrootDriver
+}
+
+func NewChrootDriver(root string) (execdriver.Driver, error) {
+	return &Driver{}, nil
+}
+
 type Chroot struct {
 	root     string
 	cmd      *exec.Cmd
+	Path     string
 	Args     []string
 	waitLock chan struct{}
 
@@ -47,22 +61,24 @@ func (c *Chroot) startPty() error {
 
 	// Copy the PTYs to our broadcasters
 	go func() {
-		//	defer container.stdout.CloseWriters()
-		//	utils.Debugf("startPty: begin of stdout pipe")
+		defer c.stdout.CloseWriters()
+		utils.Debugf("startPty: begin of stdout pipe")
 		io.Copy(c.stdout, ptyMaster)
-		//	utils.Debugf("startPty: end of stdout pipe")
+		utils.Debugf("startPty: end of stdout pipe")
 	}()
 
 	// stdin
-
-	c.cmd.Stdin = ptySlave
-	c.cmd.SysProcAttr.Setctty = true
-	go func() {
-		defer c.stdin.Close()
-		utils.Debugf("startPty: begin of stdin pipe")
-		io.Copy(ptyMaster, c.stdin)
-		utils.Debugf("startPty: end of stdin pipe")
-	}()
+	if c.stdin != nil {
+		c.cmd.Stdin = ptySlave
+		// FIXME: do we want this all the time or only on TTY mode?
+		c.cmd.SysProcAttr.Setctty = true
+		go func() {
+			defer c.stdin.Close()
+			utils.Debugf("startPty: begin of stdin pipe")
+			io.Copy(ptyMaster, c.stdin)
+			utils.Debugf("startPty: end of stdin pipe")
+		}()
+	}
 
 	if err := c.cmd.Start(); err != nil {
 		return err
@@ -75,21 +91,23 @@ func (c *Chroot) start() error {
 	c.cmd.Stdout = c.stdout
 	c.cmd.Stderr = c.stderr
 
-	stdin, err := c.cmd.StdinPipe()
-	if err != nil {
-		return err
+	if c.stdin != nil {
+		stdin, err := c.cmd.StdinPipe()
+		if err != nil {
+			return err
+		}
+		go func() {
+			defer stdin.Close()
+			utils.Debugf("start: begin of stdin pipe")
+			io.Copy(stdin, c.stdin)
+			utils.Debugf("start: end of stdin pipe")
+		}()
 	}
-	go func() {
-		defer stdin.Close()
-		utils.Debugf("start: begin of stdin pipe")
-		io.Copy(stdin, c.stdin)
-		utils.Debugf("start: end of stdin pipe")
-	}()
-
 	return c.cmd.Start()
 }
 
 func (c *Chroot) StdinPipe() (io.WriteCloser, error) {
+	c.stdin, c.stdinPipe = io.Pipe()
 	return c.stdinPipe, nil
 }
 
@@ -236,16 +254,12 @@ func (c *Chroot) Attach(stdin io.ReadCloser, stdinCloser io.Closer, stdout io.Wr
 	})
 }
 
-func (c *Chroot) lxcConfigPath() string {
-	return path.Join(c.root, "config.lxc")
-}
-
 func (c *Chroot) Exec(options *execdriver.Options) error {
-	c.Args = options.Args
+	if c.cmd != nil {
+		return execdriver.ErrAlreadyRunning
+	}
 
 	var lxcStart string = "chroot"
-
-	println("------------>", options.RootFs)
 
 	data, _ := ioutil.ReadFile(options.SysInitPath)
 
@@ -278,6 +292,7 @@ func (c *Chroot) Exec(options *execdriver.Options) error {
 	}
 
 	// Program
+	params = append(params, c.Path)
 	params = append(params, c.Args...)
 
 	fmt.Printf("---------------> %#v\n", params)
@@ -313,15 +328,16 @@ func (c *Chroot) generateEnvConfig(rootfs string, env []string) error {
 	return nil
 }
 
-func New(root string, in io.ReadCloser, inp io.WriteCloser, out, errstream *utils.WriteBroadcaster) *Chroot {
-	c := &Chroot{}
+func (d *Driver) New(root string, Path string, args []string) execdriver.Process {
+	c := &Chroot{
+		Path: Path,
+		Args: args,
+	}
 
 	c.root = root
+
 	// Attach to stdout and stderr
 	c.stderr = utils.NewWriteBroadcaster()
 	c.stdout = utils.NewWriteBroadcaster()
-
-	// Attach to stdin
-	c.stdin, c.stdinPipe = io.Pipe()
 	return c
 }

@@ -16,15 +16,25 @@ import (
 	"syscall"
 )
 
+const DriverName = "lxc"
+
 type Driver struct {
 	root         string
 	capabilities *execdriver.Capabilities
 }
 
-// FIXME: This should return an error
-func NewLxcDriver(root string, capabilities *execdriver.Capabilities) execdriver.Driver {
-	linkLxcStart(root)
-	return &Driver{root, capabilities}
+func init() {
+	execdriver.Drivers[DriverName] = NewLxcDriver
+}
+
+func NewLxcDriver(root string) (execdriver.Driver, error) {
+	if err := linkLxcStart(root); err != nil {
+		return nil, err
+	}
+	return &Driver{
+		root:         root,
+		capabilities: execdriver.GetCapabilities(),
+	}, nil
 }
 
 func linkLxcStart(root string) error {

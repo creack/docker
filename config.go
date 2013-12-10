@@ -17,6 +17,7 @@ type DaemonConfig struct {
 	DefaultIp                   net.IP
 	InterContainerCommunication bool
 	GraphDriver                 string
+	ExecDriver                  string
 }
 
 // ConfigFromJob creates and returns a new DaemonConfig object
@@ -39,5 +40,6 @@ func ConfigFromJob(job *engine.Job) *DaemonConfig {
 	config.DefaultIp = net.ParseIP(job.Getenv("DefaultIp"))
 	config.InterContainerCommunication = job.GetenvBool("InterContainerCommunication")
 	config.GraphDriver = job.Getenv("GraphDriver")
+	config.ExecDriver = job.Getenv("ExecDriver")
 	return &config
 }

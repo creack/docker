@@ -37,10 +37,7 @@ type Container struct {
 
 	Created time.Time
 
-	Path string
-	Args []string
-
-	lxc execdriver.Process
+	process execdriver.Process
 
 	Config *Config
 	State  State
@@ -202,37 +199,38 @@ func (settings *NetworkSettings) PortMappingAPI() []APIPort {
 
 // Inject the io.Reader at the given path. Note: do not close the reader
 func (container *Container) Inject(file io.Reader, pth string) error {
-	if err := container.EnsureMounted(); err != nil {
-		return fmt.Errorf("inject: error mounting container %s: %s", container.ID, err)
-	}
-
-	// Return error if path exists
-	destPath := path.Join(container.RootfsPath(), pth)
-	if _, err := os.Stat(destPath); err == nil {
-		// Since err is nil, the path could be stat'd and it exists
-		return fmt.Errorf("%s exists", pth)
-	} else if !os.IsNotExist(err) {
-		// Expect err might be that the file doesn't exist, so
-		// if it's some other error, return that.
-
-		return err
-	}
-
-	// Make sure the directory exists
-	if err := os.MkdirAll(path.Join(container.RootfsPath(), path.Dir(pth)), 0755); err != nil {
-		return err
-	}
-
-	dest, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer dest.Close()
-
-	if _, err := io.Copy(dest, file); err != nil {
-		return err
-	}
 	return nil
+	// if err := container.EnsureMounted(); err != nil {
+	// 	return fmt.Errorf("inject: error mounting container %s: %s", container.ID, err)
+	// }
+
+	// // Return error if path exists
+	// destPath := path.Join(container.RootfsPath(), pth)
+	// if _, err := os.Stat(destPath); err == nil {
+	// 	// Since err is nil, the path could be stat'd and it exists
+	// 	return fmt.Errorf("%s exists", pth)
+	// } else if !os.IsNotExist(err) {
+	// 	// Expect err might be that the file doesn't exist, so
+	// 	// if it's some other error, return that.
+
+	// 	return err
+	// }
+
+	// // Make sure the directory exists
+	// if err := os.MkdirAll(path.Join(container.RootfsPath(), path.Dir(pth)), 0755); err != nil {
+	// 	return err
+	// }
+
+	// dest, err := os.Create(destPath)
+	// if err != nil {
+	// 	return err
+	// }
+	// defer dest.Close()
+
+	// if _, err := io.Copy(dest, file); err != nil {
+	// 	return err
+	// }
+	// return nil
 }
 
 // func (container *Container) Cmd() *exec.Cmd {
@@ -292,214 +290,21 @@ func (container *Container) writeHostConfig() (err error) {
 	return ioutil.WriteFile(container.hostConfigPath(), data, 0666)
 }
 
-// func (container *Container) startPty() error {
-// 	ptyMaster, ptySlave, err := pty.Open()
-// 	if err != nil {
-// 		return err
-// 	}
-// 	container.ptyMaster = ptyMaster
-// 	container.cmd.Stdout = ptySlave
-// 	container.cmd.Stderr = ptySlave
-
-// 	// Copy the PTYs to our broadcasters
-// 	go func() {
-// 		defer container.stdout.CloseWriters()
-// 		utils.Debugf("startPty: begin of stdout pipe")
-// 		io.Copy(container.stdout, ptyMaster)
-// 		utils.Debugf("startPty: end of stdout pipe")
-// 	}()
-
-// 	// stdin
-// 	if container.Config.OpenStdin {
-// 		container.cmd.Stdin = ptySlave
-// 		container.cmd.SysProcAttr.Setctty = true
-// 		go func() {
-// 			defer container.stdin.Close()
-// 			utils.Debugf("startPty: begin of stdin pipe")
-// 			io.Copy(ptyMaster, container.stdin)
-// 			utils.Debugf("startPty: end of stdin pipe")
-// 		}()
-// 	}
-// 	if err := container.cmd.Start(); err != nil {
-// 		return err
-// 	}
-// 	ptySlave.Close()
-// 	return nil
-// }
-
-// func (container *Container) start() error {
-// 	container.cmd.Stdout = container.stdout
-// 	container.cmd.Stderr = container.stderr
-// 	if container.Config.OpenStdin {
-// 		stdin, err := container.cmd.StdinPipe()
-// 		if err != nil {
-// 			return err
-// 		}
-// 		go func() {
-// 			defer stdin.Close()
-// 			utils.Debugf("start: begin of stdin pipe")
-// 			io.Copy(stdin, container.stdin)
-// 			utils.Debugf("start: end of stdin pipe")
-// 		}()
-// 	}
-// 	return container.cmd.Start()
-// }
-
+// DEPRECATED
 func (container *Container) Attach(stdin io.ReadCloser, stdinCloser io.Closer, stdout io.Writer, stderr io.Writer) chan error {
-	return container.lxc.Attach(stdin, stdinCloser, stdout, stderr)
-	// var cStdout, cStderr io.ReadCloser
-
-	// var nJobs int
-	// errors := make(chan error, 3)
-	// if stdin != nil && container.Config.OpenStdin {
-	// 	nJobs += 1
-	// 	if cStdin, err := container.StdinPipe(); err != nil {
-	// 		errors <- err
-	// 	} else {
-	// 		go func() {
-	// 			utils.Debugf("attach: stdin: begin")
-	// 			defer utils.Debugf("attach: stdin: end")
-	// 			// No matter what, when stdin is closed (io.Copy unblock), close stdout and stderr
-	// 			if container.Config.StdinOnce && !container.Config.Tty {
-	// 				defer cStdin.Close()
-	// 			} else {
-	// 				if cStdout != nil {
-	// 					defer cStdout.Close()
-	// 				}
-	// 				if cStderr != nil {
-	// 					defer cStderr.Close()
-	// 				}
-	// 			}
-	// 			if container.Config.Tty {
-	// 				_, err = utils.CopyEscapable(cStdin, stdin)
-	// 			} else {
-	// 				_, err = io.Copy(cStdin, stdin)
-	// 			}
-	// 			if err == io.ErrClosedPipe {
-	// 				err = nil
-	// 			}
-	// 			if err != nil {
-	// 				utils.Errorf("attach: stdin: %s", err)
-	// 			}
-	// 			errors <- err
-	// 		}()
-	// 	}
-	// }
-	// if stdout != nil {
-	// 	nJobs += 1
-	// 	if p, err := container.StdoutPipe(); err != nil {
-	// 		errors <- err
-	// 	} else {
-	// 		cStdout = p
-	// 		go func() {
-	// 			utils.Debugf("attach: stdout: begin")
-	// 			defer utils.Debugf("attach: stdout: end")
-	// 			// If we are in StdinOnce mode, then close stdin
-	// 			if container.Config.StdinOnce && stdin != nil {
-	// 				defer stdin.Close()
-	// 			}
-	// 			if stdinCloser != nil {
-	// 				defer stdinCloser.Close()
-	// 			}
-	// 			_, err := io.Copy(stdout, cStdout)
-	// 			if err == io.ErrClosedPipe {
-	// 				err = nil
-	// 			}
-	// 			if err != nil {
-	// 				utils.Errorf("attach: stdout: %s", err)
-	// 			}
-	// 			errors <- err
-	// 		}()
-	// 	}
-	// } else {
-	// 	go func() {
-	// 		if stdinCloser != nil {
-	// 			defer stdinCloser.Close()
-	// 		}
-	// 		if cStdout, err := container.StdoutPipe(); err != nil {
-	// 			utils.Errorf("attach: stdout pipe: %s", err)
-	// 		} else {
-	// 			io.Copy(&utils.NopWriter{}, cStdout)
-	// 		}
-	// 	}()
-	// }
-	// if stderr != nil {
-	// 	nJobs += 1
-	// 	if p, err := container.StderrPipe(); err != nil {
-	// 		errors <- err
-	// 	} else {
-	// 		cStderr = p
-	// 		go func() {
-	// 			utils.Debugf("attach: stderr: begin")
-	// 			defer utils.Debugf("attach: stderr: end")
-	// 			// If we are in StdinOnce mode, then close stdin
-	// 			if container.Config.StdinOnce && stdin != nil {
-	// 				defer stdin.Close()
-	// 			}
-	// 			if stdinCloser != nil {
-	// 				defer stdinCloser.Close()
-	// 			}
-	// 			_, err := io.Copy(stderr, cStderr)
-	// 			if err == io.ErrClosedPipe {
-	// 				err = nil
-	// 			}
-	// 			if err != nil {
-	// 				utils.Errorf("attach: stderr: %s", err)
-	// 			}
-	// 			errors <- err
-	// 		}()
-	// 	}
-	// } else {
-	// 	go func() {
-	// 		if stdinCloser != nil {
-	// 			defer stdinCloser.Close()
-	// 		}
-
-	// 		if cStderr, err := container.StderrPipe(); err != nil {
-	// 			utils.Errorf("attach: stdout pipe: %s", err)
-	// 		} else {
-	// 			io.Copy(&utils.NopWriter{}, cStderr)
-	// 		}
-	// 	}()
-	// }
-
-	// return utils.Go(func() error {
-	// 	if cStdout != nil {
-	// 		defer cStdout.Close()
-	// 	}
-	// 	if cStderr != nil {
-	// 		defer cStderr.Close()
-	// 	}
-	// 	// FIXME: how to clean up the stdin goroutine without the unwanted side effect
-	// 	// of closing the passed stdin? Add an intermediary io.Pipe?
-	// 	for i := 0; i < nJobs; i += 1 {
-	// 		utils.Debugf("attach: waiting for job %d/%d", i+1, nJobs)
-	// 		if err := <-errors; err != nil {
-	// 			utils.Errorf("attach: job %d returned error %s, aborting all jobs", i+1, err)
-	// 			return err
-	// 		}
-	// 		utils.Debugf("attach: job %d completed successfully", i+1)
-	// 	}
-	// 	utils.Debugf("attach: all jobs completed successfully")
-	// 	return nil
-	// })
+	return container.process.Attach(stdin, stdinCloser, stdout, stderr)
 }
 
 func (container *Container) Start() (err error) {
 	container.Lock()
 	defer container.Unlock()
 
-	if container.State.IsRunning() {
-		return fmt.Errorf("The container %s is already running.", container.ID)
-	}
 	defer func() {
 		if err != nil {
 			container.cleanup()
 		}
 	}()
-	if err := container.EnsureMounted(); err != nil {
-		return err
-	}
+
 	if container.runtime.networkManager.disabled {
 		container.Config.NetworkDisabled = true
 		container.buildHostnameAndHostsFiles("127.0.1.1")
@@ -508,20 +313,6 @@ func (container *Container) Start() (err error) {
 			return err
 		}
 		container.buildHostnameAndHostsFiles(container.NetworkSettings.IPAddress)
-	}
-
-	// Make sure the config is compatible with the current kernel
-	if container.Config.Memory > 0 && !container.runtime.capabilities.MemoryLimit {
-		log.Printf("WARNING: Your kernel does not support memory limit capabilities. Limitation discarded.\n")
-		container.Config.Memory = 0
-	}
-	if container.Config.Memory > 0 && !container.runtime.capabilities.SwapLimit {
-		log.Printf("WARNING: Your kernel does not support swap limit capabilities. Limitation discarded.\n")
-		container.Config.MemorySwap = -1
-	}
-
-	if container.runtime.capabilities.IPv4ForwardingDisabled {
-		log.Printf("WARNING: IPv4 forwarding is disabled. Networking will not work")
 	}
 
 	if container.Volumes == nil || len(container.Volumes) == 0 {
@@ -539,22 +330,19 @@ func (container *Container) Start() (err error) {
 	}
 
 	opts := &execdriver.Options{
-		Args:        append([]string{container.Path}, container.Args...),
-		ID:          container.ID,
-		Context:     container,
-		Hostname:    container.Config.Hostname,
-		Tty:         container.Config.Tty,
-		Env:         container.Config.Env,
-		RootFs:      container.rootfs,
-		SysInitPath: container.SysInitPath,
+		ID:           container.ID,
+		Context:      container,
+		Hostname:     container.Config.Hostname,
+		Tty:          container.Config.Tty,
+		Env:          container.Config.Env,
+		RootFs:       container.rootfs,
+		SysInitPath:  container.SysInitPath,
+		MaxMemory:    container.Config.Memory,
+		Capabilities: container.runtime.capabilities,
+		Privileged:   container.hostConfig.Privileged,
 	}
 
-	return container.lxc.Exec(opts)
-
-	// var lxcStart string = "lxc-start"
-	// if container.hostConfig.Privileged && container.runtime.capabilities.AppArmor {
-	// 	lxcStart = path.Join(container.runtime.config.Root, "lxc-start-unconfined")
-	// }
+	return container.process.Exec(opts)
 
 	// params := []string{
 	// 	lxcStart,
@@ -1295,9 +1083,6 @@ func (container *Container) Resize(h, w int) error {
 }
 
 func (container *Container) ExportRw() (archive.Archive, error) {
-	if err := container.EnsureMounted(); err != nil {
-		return nil, err
-	}
 	if container.runtime == nil {
 		return nil, fmt.Errorf("Can't load storage driver for unregistered container %s", container.ID)
 	}
@@ -1306,9 +1091,9 @@ func (container *Container) ExportRw() (archive.Archive, error) {
 }
 
 func (container *Container) Export() (archive.Archive, error) {
-	if err := container.EnsureMounted(); err != nil {
-		return nil, err
-	}
+	// if err := container.EnsureMounted(); err != nil {
+	// 	return nil, err
+	// }
 	return archive.Tar(container.RootfsPath(), archive.Uncompressed)
 }
 
@@ -1325,16 +1110,6 @@ func (container *Container) WaitTimeout(timeout time.Duration) error {
 	case <-done:
 		return nil
 	}
-}
-
-func (container *Container) EnsureMounted() error {
-	// FIXME: EnsureMounted is deprecated because drivers are now responsible
-	// for re-entrant mounting in their Get() method.
-	return container.Mount()
-}
-
-func (container *Container) Mount() error {
-	return container.runtime.Mount(container)
 }
 
 func (container *Container) Changes() ([]archive.Change, error) {
@@ -1396,10 +1171,10 @@ func (container *Container) GetSize() (int64, int64) {
 		driver             = container.runtime.driver
 	)
 
-	if err := container.EnsureMounted(); err != nil {
-		utils.Errorf("Warning: failed to compute size of container rootfs %s: %s", container.ID, err)
-		return sizeRw, sizeRootfs
-	}
+	// if err := container.EnsureMounted(); err != nil {
+	// 	utils.Errorf("Warning: failed to compute size of container rootfs %s: %s", container.ID, err)
+	// 	return sizeRw, sizeRootfs
+	// }
 
 	if differ, ok := container.runtime.driver.(graphdriver.Differ); ok {
 		sizeRw, err = differ.DiffSize(container.ID)
@@ -1427,9 +1202,9 @@ func (container *Container) GetSize() (int64, int64) {
 }
 
 func (container *Container) Copy(resource string) (archive.Archive, error) {
-	if err := container.EnsureMounted(); err != nil {
-		return nil, err
-	}
+	// if err := container.EnsureMounted(); err != nil {
+	// 	return nil, err
+	// }
 	var filter []string
 	basePath := path.Join(container.RootfsPath(), resource)
 	stat, err := os.Stat(basePath)

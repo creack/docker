@@ -10,12 +10,16 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"sync"
 	"syscall"
 )
 
 type Lxc struct {
+	sync.Mutex
+
 	root     string
 	cmd      *exec.Cmd
+	Path     string
 	Args     []string
 	waitLock chan struct{}
 
@@ -28,11 +32,13 @@ type Lxc struct {
 
 func (l *Lxc) monitor() error {
 	l.cmd.Wait()
+	l.cmd = nil
 	l.stdout.CloseWriters()
 	l.stderr.CloseWriters()
 	l.stdin.Close()
 	l.stdinPipe.Close()
 	l.ptyMaster.Close()
+
 	return nil
 }
 
@@ -47,22 +53,24 @@ func (l *Lxc) startPty() error {
 
 	// Copy the PTYs to our broadcasters
 	go func() {
-		//	defer container.stdout.CloseWriters()
-		//	utils.Debugf("startPty: begin of stdout pipe")
+		defer l.stdout.CloseWriters()
+		utils.Debugf("startPty: begin of stdout pipe")
 		io.Copy(l.stdout, ptyMaster)
-		//	utils.Debugf("startPty: end of stdout pipe")
+		utils.Debugf("startPty: end of stdout pipe")
 	}()
 
 	// stdin
-
-	l.cmd.Stdin = ptySlave
-	l.cmd.SysProcAttr.Setctty = true
-	go func() {
-		defer l.stdin.Close()
-		utils.Debugf("startPty: begin of stdin pipe")
-		io.Copy(ptyMaster, l.stdin)
-		utils.Debugf("startPty: end of stdin pipe")
-	}()
+	if l.stdin != nil {
+		l.cmd.Stdin = ptySlave
+		// FIXME: do we want this all the time or only on TTY mode?
+		l.cmd.SysProcAttr.Setctty = true
+		go func() {
+			defer l.stdin.Close()
+			utils.Debugf("startPty: begin of stdin pipe")
+			io.Copy(ptyMaster, l.stdin)
+			utils.Debugf("startPty: end of stdin pipe")
+		}()
+	}
 
 	if err := l.cmd.Start(); err != nil {
 		return err
@@ -75,34 +83,36 @@ func (l *Lxc) start() error {
 	l.cmd.Stdout = l.stdout
 	l.cmd.Stderr = l.stderr
 
-	stdin, err := l.cmd.StdinPipe()
-	if err != nil {
-		return err
+	if l.stdin != nil {
+		stdin, err := l.cmd.StdinPipe()
+		if err != nil {
+			return err
+		}
+		go func() {
+			defer stdin.Close()
+			utils.Debugf("start: begin of stdin pipe")
+			io.Copy(stdin, l.stdin)
+			utils.Debugf("start: end of stdin pipe")
+		}()
 	}
-	go func() {
-		defer stdin.Close()
-		utils.Debugf("start: begin of stdin pipe")
-		io.Copy(stdin, l.stdin)
-		utils.Debugf("start: end of stdin pipe")
-	}()
-
 	return l.cmd.Start()
 }
 
 func (l *Lxc) StdinPipe() (io.WriteCloser, error) {
+	l.stdin, l.stdinPipe = io.Pipe()
 	return l.stdinPipe, nil
 }
 
 func (l *Lxc) StdoutPipe() (io.ReadCloser, error) {
 	reader, writer := io.Pipe()
 	l.stdout.AddWriter(writer, "")
-	return utils.NewBufReader(reader), nil
+	return reader, nil
 }
 
 func (l *Lxc) StderrPipe() (io.ReadCloser, error) {
 	reader, writer := io.Pipe()
 	l.stderr.AddWriter(writer, "")
-	return utils.NewBufReader(reader), nil
+	return reader, nil
 }
 
 func (l *Lxc) Attach(stdin io.ReadCloser, stdinCloser io.Closer, stdout io.Writer, stderr io.Writer) chan error {
@@ -249,10 +259,40 @@ func (l *Lxc) generateLXCConfig(context interface{}) error {
 	return LxcTemplateCompiled.Execute(fo, context)
 }
 
-func (l *Lxc) Exec(options *execdriver.Options) error {
-	l.Args = options.Args
+func (l *Lxc) cgroupCheck(opt *execdriver.Options) error {
+	// Discard the check if we don't have Capabilities
+	if opt.Capabilities == nil {
+		return nil
+	}
 
-	var lxcStart string = "lxc-start"
+	// Make sure the config is compatible with the current kernel
+	if opt.MaxMemory > 0 && !opt.Capabilities.MemoryLimit {
+		//		log.Printf("W ARNING: Your kernel does not support memory limit capabilities. Limitation discarded.\n")
+		opt.MaxMemory = 0
+	}
+	if opt.MaxMemory > 0 && !opt.Capabilities.SwapLimit {
+		//log.Printf("WARNING: Your kernel does not support swap limit capabilities. Limitation discarded.\n")
+		opt.MaxSwap = -1
+	}
+
+	if opt.Capabilities.IPv4ForwardingDisabled {
+		//		log.Printf("WARNING: IPv4 forwarding is disabled. Networking will not work")
+	}
+	return nil
+}
+
+func (l *Lxc) Exec(options *execdriver.Options) error {
+	var lxcStart = "lxc-start"
+
+	// if options.Privileged && options.Capabilities.AppArmor {
+	// 	lxcStart = path.Join(container.runtime.config.Root, "lxc-start-unconfined")
+	// }
+
+	if l.cmd != nil {
+		return execdriver.ErrAlreadyRunning
+	}
+
+	l.cgroupCheck(options)
 
 	if err := l.generateLXCConfig(options.Context); err != nil {
 		return err
@@ -287,11 +327,10 @@ func (l *Lxc) Exec(options *execdriver.Options) error {
 	}
 
 	// Program
-	params = append(params, "--")
+	params = append(params, "--", l.Path)
 	params = append(params, l.Args...)
 
 	l.cmd = exec.Command(params[0], params[1:]...)
-
 	l.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	var err error
@@ -322,15 +361,13 @@ func (l *Lxc) generateEnvConfig(env []string) error {
 	return nil
 }
 
-func New(root string, in io.ReadCloser, inp io.WriteCloser, out, errstream *utils.WriteBroadcaster) *Lxc {
-	l := &Lxc{}
-
-	l.root = root
-	// Attach to stdout and stderr
-	l.stderr = utils.NewWriteBroadcaster()
-	l.stdout = utils.NewWriteBroadcaster()
-
-	// Attach to stdin
-	l.stdin, l.stdinPipe = io.Pipe()
+func New(root string, Path string, args []string) *Lxc {
+	l := &Lxc{
+		Path:   Path,
+		Args:   args,
+		root:   root,
+		stderr: utils.NewWriteBroadcaster(),
+		stdout: utils.NewWriteBroadcaster(),
+	}
 	return l
 }

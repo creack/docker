@@ -6,7 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/dotcloud/docker/archive"
-	"github.com/dotcloud/docker/execdriver/chroot"
+	"github.com/dotcloud/docker/execdriver"
 	"github.com/dotcloud/docker/execdriver/lxc"
 	"github.com/dotcloud/docker/graphdb"
 	"github.com/dotcloud/docker/graphdriver"
@@ -14,7 +14,6 @@ import (
 	_ "github.com/dotcloud/docker/graphdriver/devmapper"
 	_ "github.com/dotcloud/docker/graphdriver/vfs"
 	"github.com/dotcloud/docker/utils"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -31,13 +30,6 @@ const MaxImageDepth = 42
 
 var defaultDns = []string{"8.8.8.8", "8.8.4.4"}
 
-type Capabilities struct {
-	MemoryLimit            bool
-	SwapLimit              bool
-	IPv4ForwardingDisabled bool
-	AppArmor               bool
-}
-
 type Runtime struct {
 	repository     string
 	sysInitPath    string
@@ -46,7 +38,7 @@ type Runtime struct {
 	graph          *Graph
 	repositories   *TagStore
 	idIndex        *utils.TruncIndex
-	capabilities   *Capabilities
+	capabilities   *execdriver.Capabilities
 	volumes        *Graph
 	srv            *Server
 	config         *DaemonConfig
@@ -136,27 +128,18 @@ func (runtime *Runtime) Register(container *Container) error {
 		return fmt.Errorf("Error getting container filesystem %s from driver %s: %s", container.ID, runtime.driver, err)
 	}
 	container.rootfs = rootfs
-
 	container.runtime = runtime
 
-	// Attach to stdout and stderr
-	container.stderr = utils.NewWriteBroadcaster()
-	container.stdout = utils.NewWriteBroadcaster()
-
-	// Attach to stdin
+	// Allocate stdin
 	if container.Config.OpenStdin {
-		container.stdin, container.stdinPipe = io.Pipe()
-	} else {
-		container.stdinPipe = utils.NopWriteCloser(ioutil.Discard) // Silently drop stdin
+		container.process.StdinPipe()
 	}
+
 	// done
 	runtime.containers.PushBack(container)
 	runtime.idIndex.Add(container.ID)
 
-	p := lxc.New(container.root, container.stdin, container.stdinPipe, container.stdout, container.stderr)
-	container.lxc = p
-
-	container.lxc = chroot.New(container.root, container.stdin, container.stdinPipe, container.stdout, container.stderr)
+	//	container.lxc = chroot.New(container.root, container.stdin, container.stdinPipe, container.stdout, container.stderr)
 
 	// FIXME: if the container is supposed to be running but is not, auto restart it?
 	//        if so, then we need to restart monitor and init a new lock
@@ -477,8 +460,6 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 		// FIXME: we should generate the ID here instead of receiving it as an argument
 		ID:              id,
 		Created:         time.Now().UTC(),
-		Path:            entrypoint,
-		Args:            args, //FIXME: de-duplicate from config
 		Config:          config,
 		hostConfig:      &HostConfig{},
 		Image:           img.ID, // Always use the resolved image id
@@ -487,8 +468,10 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 		SysInitPath: runtime.sysInitPath,
 		Name:        name,
 		Driver:      runtime.driver.String(),
+		root:        runtime.containerRoot(id),
+		process:     lxc.New(runtime.containerRoot(id), entrypoint, args),
 	}
-	container.root = runtime.containerRoot(container.ID)
+
 	// Step 1: create the container directory.
 	// This doubles as a barrier to avoid race conditions.
 	if err := os.Mkdir(container.root, 0700); err != nil {
@@ -560,9 +543,9 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 func (runtime *Runtime) Commit(container *Container, repository, tag, comment, author string, config *Config) (*Image, error) {
 	// FIXME: freeze the container before copying it to avoid data corruption?
 	// FIXME: this shouldn't be in commands.
-	if err := container.EnsureMounted(); err != nil {
-		return nil, err
-	}
+	// if err := container.EnsureMounted(); err != nil {
+	// 	return nil, err
+	// }
 
 	rwTar, err := container.ExportRw()
 	if err != nil {
@@ -753,7 +736,7 @@ func NewRuntimeFromDirectory(config *DaemonConfig) (*Runtime, error) {
 		graph:          g,
 		repositories:   repositories,
 		idIndex:        utils.NewTruncIndex(),
-		capabilities:   &Capabilities{},
+		capabilities:   &execdriver.Capabilities{},
 		volumes:        volumes,
 		config:         config,
 		containerGraph: graph,
@@ -857,23 +840,6 @@ func (runtime *Runtime) Nuke() error {
 	runtime.Close()
 
 	return os.RemoveAll(runtime.config.Root)
-}
-
-func linkLxcStart(root string) error {
-	sourcePath, err := exec.LookPath("lxc-start")
-	if err != nil {
-		return err
-	}
-	targetPath := path.Join(root, "lxc-start-unconfined")
-
-	if _, err := os.Stat(targetPath); err != nil && !os.IsNotExist(err) {
-		return err
-	} else if err == nil {
-		if err := os.Remove(targetPath); err != nil {
-			return err
-		}
-	}
-	return os.Symlink(sourcePath, targetPath)
 }
 
 // FIXME: this is a convenience function for integration tests

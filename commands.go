@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/dotcloud/docker/archive"
 	"github.com/dotcloud/docker/auth"
+	"github.com/dotcloud/docker/execdriver"
 	"github.com/dotcloud/docker/registry"
 	"github.com/dotcloud/docker/term"
 	"github.com/dotcloud/docker/utils"
@@ -1686,14 +1687,14 @@ func (cli *DockerCli) CmdTag(args ...string) error {
 }
 
 //FIXME Only used in tests
-func ParseRun(args []string, capabilities *Capabilities) (*Config, *HostConfig, *flag.FlagSet, error) {
+func ParseRun(args []string, capabilities *execdriver.Capabilities) (*Config, *HostConfig, *flag.FlagSet, error) {
 	cmd := flag.NewFlagSet("run", flag.ContinueOnError)
 	cmd.SetOutput(ioutil.Discard)
 	cmd.Usage = nil
 	return parseRun(cmd, args, capabilities)
 }
 
-func parseRun(cmd *flag.FlagSet, args []string, capabilities *Capabilities) (*Config, *HostConfig, *flag.FlagSet, error) {
+func parseRun(cmd *flag.FlagSet, args []string, capabilities *execdriver.Capabilities) (*Config, *HostConfig, *flag.FlagSet, error) {
 	var (
 		// FIXME: use utils.ListOpts for attach and volumes?
 		flAttach  = NewListOpts(ValidateAttach)

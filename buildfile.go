@@ -347,9 +347,9 @@ func (b *buildFile) CmdAdd(args string) error {
 	}
 	b.tmpContainers[container.ID] = struct{}{}
 
-	if err := container.EnsureMounted(); err != nil {
-		return err
-	}
+	// if err := container.EnsureMounted(); err != nil {
+	// 	return err
+	// }
 	defer container.Unmount()
 
 	if utils.IsURL(orig) {
@@ -412,7 +412,7 @@ func (b *buildFile) run() (string, error) {
 	fmt.Fprintf(b.outStream, " ---> Running in %s\n", utils.TruncateID(c.ID))
 
 	// override the entry point that may have been picked up from the base image
-	c.Path = b.config.Cmd[0]
+	//	c.Path = b.config.Cmd[0]
 	//	c.Args = b.config.Cmd[1:]
 
 	var errCh chan error
@@ -480,9 +480,9 @@ func (b *buildFile) commit(id string, autoCmd []string, comment string) error {
 		b.tmpContainers[container.ID] = struct{}{}
 		fmt.Fprintf(b.outStream, " ---> Running in %s\n", utils.TruncateID(container.ID))
 		id = container.ID
-		if err := container.EnsureMounted(); err != nil {
-			return err
-		}
+		// if err := container.EnsureMounted(); err != nil {
+		// 	return err
+		// }
 		defer container.Unmount()
 	}
 

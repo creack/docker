@@ -329,132 +329,72 @@ func (container *Container) Start() (err error) {
 		return err
 	}
 
+	var gateway string
+	if !container.Config.NetworkDisabled {
+		gateway = container.network.Gateway.String()
+	}
+
 	opts := &execdriver.Options{
-		ID:           container.ID,
-		Context:      container,
-		Hostname:     container.Config.Hostname,
-		Tty:          container.Config.Tty,
-		Env:          container.Config.Env,
-		RootFs:       container.rootfs,
-		SysInitPath:  container.SysInitPath,
-		MaxMemory:    container.Config.Memory,
-		Capabilities: container.runtime.capabilities,
-		Privileged:   container.hostConfig.Privileged,
+		ID:          container.ID,
+		Context:     container,
+		Hostname:    container.Config.Hostname,
+		Tty:         container.Config.Tty,
+		Env:         container.Config.Env,
+		RootFs:      container.rootfs,
+		SysInitPath: container.SysInitPath,
+		MaxMemory:   container.Config.Memory,
+		Privileged:  container.hostConfig.Privileged,
+		Gateway:     gateway,
+		User:        container.Config.User,
+	}
+
+	// Init any links between the parent and children
+	runtime := container.runtime
+	children, err := runtime.Children(container.Name)
+	if err != nil {
+		return err
+	}
+
+	if len(children) > 0 {
+		container.activeLinks = make(map[string]*Link, len(children))
+
+		// If we encounter an error make sure that we rollback any network
+		// config and ip table changes
+		rollback := func() {
+			for _, link := range container.activeLinks {
+				link.Disable()
+			}
+			container.activeLinks = nil
+		}
+
+		for p, child := range children {
+			link, err := NewLink(container, child, p, runtime.networkManager.bridgeIface)
+			if err != nil {
+				rollback()
+				return err
+			}
+
+			container.activeLinks[link.Alias()] = link
+			if err := link.Enable(); err != nil {
+				rollback()
+				return err
+			}
+
+			for _, envVar := range link.ToEnv() {
+				opts.Env = append(opts.Env, envVar)
+			}
+		}
+	}
+
+	if container.Config.WorkingDir != "" {
+		workingDir := path.Clean(container.Config.WorkingDir)
+
+		if err := os.MkdirAll(path.Join(container.RootfsPath(), workingDir), 0755); err != nil {
+			return nil
+		}
 	}
 
 	return container.process.Exec(opts)
-
-	// params := []string{
-	// 	lxcStart,
-	// 	"-n", container.ID,
-	// 	"-f", container.lxcConfigPath(),
-	// 	"--",
-	// 	"/.dockerinit",
-	// }
-
-	// // Networking
-	// if !container.Config.NetworkDisabled {
-	// 	params = append(params, "-g", container.network.Gateway.String())
-	// }
-
-	// // User
-	// if container.Config.User != "" {
-	// 	params = append(params, "-u", container.Config.User)
-	// }
-
-	// // Setup environment
-	// env := []string{
-	// 	"HOME=/",
-	// 	"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-	// 	"container=lxc",
-	// 	"HOSTNAME=" + container.Config.Hostname,
-	// }
-
-	// if container.Config.Tty {
-	// 	env = append(env, "TERM=xterm")
-	// }
-
-	// // Init any links between the parent and children
-	// runtime := container.runtime
-
-	// children, err := runtime.Children(container.Name)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// if len(children) > 0 {
-	// 	container.activeLinks = make(map[string]*Link, len(children))
-
-	// 	// If we encounter an error make sure that we rollback any network
-	// 	// config and ip table changes
-	// 	rollback := func() {
-	// 		for _, link := range container.activeLinks {
-	// 			link.Disable()
-	// 		}
-	// 		container.activeLinks = nil
-	// 	}
-
-	// 	for p, child := range children {
-	// 		link, err := NewLink(container, child, p, runtime.networkManager.bridgeIface)
-	// 		if err != nil {
-	// 			rollback()
-	// 			return err
-	// 		}
-
-	// 		container.activeLinks[link.Alias()] = link
-	// 		if err := link.Enable(); err != nil {
-	// 			rollback()
-	// 			return err
-	// 		}
-
-	// 		for _, envVar := range link.ToEnv() {
-	// 			env = append(env, envVar)
-	// 		}
-	// 	}
-	// }
-
-	// for _, elem := range container.Config.Env {
-	// 	env = append(env, elem)
-	// }
-
-	// if err := container.generateEnvConfig(env); err != nil {
-	// 	return err
-	// }
-
-	// if container.Config.WorkingDir != "" {
-	// 	workingDir := path.Clean(container.Config.WorkingDir)
-	// 	utils.Debugf("[working dir] working dir is %s", workingDir)
-
-	// 	if err := os.MkdirAll(path.Join(container.RootfsPath(), workingDir), 0755); err != nil {
-	// 		return nil
-	// 	}
-
-	// 	params = append(params,
-	// 		"-w", workingDir,
-	// 	)
-	// }
-
-	// // Program
-	// params = append(params, "--", container.Path)
-	// params = append(params, container.Args...)
-
-	// if RootIsShared() {
-	// 	// lxc-start really needs / to be non-shared, or all kinds of stuff break
-	// 	// when lxc-start unmount things and those unmounts propagate to the main
-	// 	// mount namespace.
-	// 	// What we really want is to clone into a new namespace and then
-	// 	// mount / MS_REC|MS_SLAVE, but since we can't really clone or fork
-	// 	// without exec in go we have to do this horrible shell hack...
-	// 	shellString :=
-	// 		"mount --make-rslave /; exec " +
-	// 			utils.ShellQuoteArguments(params)
-
-	// 	params = []string{
-	// 		"unshare", "-m", "--", "/bin/sh", "-c", shellString,
-	// 	}
-	// }
-
-	// container.cmd = exec.Command(params[0], params[1:]...)
 
 	// // Setup logging of stdout and stderr to disk
 	// if err := container.runtime.LogToDisk(container.stdout, container.logPath("json"), "stdout"); err != nil {

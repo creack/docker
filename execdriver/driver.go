@@ -17,18 +17,24 @@ type Capabilities struct {
 }
 
 type Options struct {
-	ID           string
-	Args         []string
-	Hostname     string
-	Tty          bool
-	Env          []string
-	Context      interface{}
-	RootFs       string
-	SysInitPath  string
-	Capabilities *Capabilities
-	MaxMemory    int64
-	MaxSwap      int64
-	Privileged   bool
+	ID          string
+	Args        []string
+	Hostname    string
+	Tty         bool
+	Env         []string
+	Context     interface{}
+	RootFs      string
+	SysInitPath string
+	MaxMemory   int64
+	MaxSwap     int64
+	Privileged  bool
+	Gateway     string
+	User        string
+	WorkingDir  string
+}
+
+type Driver interface {
+	New(root, path string, args []string) Process
 }
 
 type Process interface {

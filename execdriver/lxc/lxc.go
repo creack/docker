@@ -7,12 +7,56 @@ import (
 	"github.com/kr/pty"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
 	"path"
+	"strings"
 	"sync"
 	"syscall"
 )
+
+type Driver struct {
+	root         string
+	capabilities *execdriver.Capabilities
+}
+
+// FIXME: This should return an error
+func NewLxcDriver(root string, capabilities *execdriver.Capabilities) execdriver.Driver {
+	linkLxcStart(root)
+	return &Driver{root, capabilities}
+}
+
+func linkLxcStart(root string) error {
+	sourcePath, err := exec.LookPath("lxc-start")
+	if err != nil {
+		return err
+	}
+	targetPath := path.Join(root, "lxc-start-unconfined")
+
+	if _, err := os.Stat(targetPath); err != nil && !os.IsNotExist(err) {
+		return err
+	} else if err == nil {
+		if err := os.Remove(targetPath); err != nil {
+			return err
+		}
+	}
+	return os.Symlink(sourcePath, targetPath)
+}
+
+func rootIsShared() bool {
+	if data, err := ioutil.ReadFile("/proc/self/mountinfo"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			cols := strings.Split(line, " ")
+			if len(cols) >= 6 && cols[4] == "/" {
+				return strings.HasPrefix(cols[6], "shared")
+			}
+		}
+	}
+
+	// No idea, probably safe to assume so
+	return true
+}
 
 type Lxc struct {
 	sync.Mutex
@@ -28,6 +72,8 @@ type Lxc struct {
 	stdin     io.ReadCloser
 	stdinPipe io.WriteCloser
 	ptyMaster io.Closer
+
+	driver *Driver
 }
 
 func (l *Lxc) monitor() error {
@@ -261,22 +307,22 @@ func (l *Lxc) generateLXCConfig(context interface{}) error {
 
 func (l *Lxc) cgroupCheck(opt *execdriver.Options) error {
 	// Discard the check if we don't have Capabilities
-	if opt.Capabilities == nil {
+	if l.driver.capabilities == nil {
 		return nil
 	}
 
 	// Make sure the config is compatible with the current kernel
-	if opt.MaxMemory > 0 && !opt.Capabilities.MemoryLimit {
-		//		log.Printf("W ARNING: Your kernel does not support memory limit capabilities. Limitation discarded.\n")
+	if opt.MaxMemory > 0 && !l.driver.capabilities.MemoryLimit {
+		log.Printf("W ARNING: Your kernel does not support memory limit capabilities. Limitation discarded.\n")
 		opt.MaxMemory = 0
 	}
-	if opt.MaxMemory > 0 && !opt.Capabilities.SwapLimit {
-		//log.Printf("WARNING: Your kernel does not support swap limit capabilities. Limitation discarded.\n")
+	if opt.MaxMemory > 0 && !l.driver.capabilities.SwapLimit {
+		log.Printf("WARNING: Your kernel does not support swap limit capabilities. Limitation discarded.\n")
 		opt.MaxSwap = -1
 	}
 
-	if opt.Capabilities.IPv4ForwardingDisabled {
-		//		log.Printf("WARNING: IPv4 forwarding is disabled. Networking will not work")
+	if l.driver.capabilities.IPv4ForwardingDisabled {
+		log.Printf("WARNING: IPv4 forwarding is disabled. Networking will not work")
 	}
 	return nil
 }
@@ -284,9 +330,9 @@ func (l *Lxc) cgroupCheck(opt *execdriver.Options) error {
 func (l *Lxc) Exec(options *execdriver.Options) error {
 	var lxcStart = "lxc-start"
 
-	// if options.Privileged && options.Capabilities.AppArmor {
-	// 	lxcStart = path.Join(container.runtime.config.Root, "lxc-start-unconfined")
-	// }
+	if options.Privileged && l.driver.capabilities.AppArmor {
+		lxcStart = path.Join(l.driver.root, "lxc-start-unconfined")
+	}
 
 	if l.cmd != nil {
 		return execdriver.ErrAlreadyRunning
@@ -304,6 +350,18 @@ func (l *Lxc) Exec(options *execdriver.Options) error {
 		"-f", l.lxcConfigPath(),
 		"--",
 		"/.dockerinit",
+	}
+
+	if options.Gateway != "" {
+		params = append(params, "-g", options.Gateway)
+	}
+
+	if options.User != "" {
+		params = append(params, "-u", options.User)
+	}
+
+	if options.WorkingDir != "" {
+		params = append(params, "-w", options.WorkingDir)
 	}
 
 	// Setup environment
@@ -330,16 +388,31 @@ func (l *Lxc) Exec(options *execdriver.Options) error {
 	params = append(params, "--", l.Path)
 	params = append(params, l.Args...)
 
+	if rootIsShared() {
+		// lxc-start really needs / to be non-shared, or all kinds of stuff break
+		// when lxc-start unmount things and those unmounts propagate to the main
+		// mount namespace.
+		// What we really want is to clone into a new namespace and then
+		// mount / MS_REC|MS_SLAVE, but since we can't really clone or fork
+		// without exec in go we have to do this horrible shell hack...
+		shellString :=
+			"mount --make-rslave /; exec " +
+				utils.ShellQuoteArguments(params)
+
+		params = []string{
+			"unshare", "-m", "--", "/bin/sh", "-c", shellString,
+		}
+	}
+
 	l.cmd = exec.Command(params[0], params[1:]...)
 	l.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
-	var err error
+	starter := l.start
 	if options.Tty {
-		err = l.startPty()
-	} else {
-		err = l.start()
+		starter = l.startPty
 	}
-	if err != nil {
+
+	if err := starter(); err != nil {
 		return err
 	}
 
@@ -356,18 +429,17 @@ func (l *Lxc) generateEnvConfig(env []string) error {
 	if err != nil {
 		return err
 	}
-
-	ioutil.WriteFile(path.Join(l.root, "config.env"), data, 0600)
-	return nil
+	return ioutil.WriteFile(path.Join(l.root, "config.env"), data, 0600)
 }
 
-func New(root string, Path string, args []string) *Lxc {
+func (d *Driver) New(root string, Path string, args []string) execdriver.Process {
 	l := &Lxc{
 		Path:   Path,
 		Args:   args,
 		root:   root,
 		stderr: utils.NewWriteBroadcaster(),
 		stdout: utils.NewWriteBroadcaster(),
+		driver: d,
 	}
 	return l
 }

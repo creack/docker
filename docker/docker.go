@@ -38,7 +38,7 @@ func main() {
 		flDefaultIp          = flag.String("ip", "0.0.0.0", "Default IP address to use when binding container ports")
 		flInterContainerComm = flag.Bool("icc", true, "Enable inter-container communication")
 		flGraphDriver        = flag.String("s", "", "Force the docker runtime to use a specific storage driver")
-		flExecDriver         = flag.String("x", "", "Force the docker runtime to use specific execution driver")
+		flExecDriver         = flag.String("x", "lxc", "Force the docker runtime to use specific execution driver")
 		flHosts              = docker.NewListOpts(docker.ValidateHost)
 	)
 	flag.Var(&flDns, "dns", "Force docker to use specific DNS servers")

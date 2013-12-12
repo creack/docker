@@ -17,7 +17,7 @@ import (
 	"github.com/dotcloud/docker/utils"
 	"io/ioutil"
 	"os"
-	"os/exec"
+	_ "os/exec"
 	"path"
 	"sort"
 	"strings"
@@ -104,9 +104,9 @@ func (runtime *Runtime) load(id string) (*Container, error) {
 	if container.ID != id {
 		return container, fmt.Errorf("Container %s is stored at %s", container.ID, id)
 	}
-	if container.State.IsRunning() {
-		container.State.SetGhost(true)
-	}
+	// if container.State.IsRunning() {
+	// 	container.State.SetGhost(true)
+	// }
 	return container, nil
 }
 
@@ -142,39 +142,39 @@ func (runtime *Runtime) Register(container *Container) error {
 	// FIXME: if the container is supposed to be running but is not, auto restart it?
 	//        if so, then we need to restart monitor and init a new lock
 	// If the container is supposed to be running, make sure of it
-	if container.State.IsRunning() {
-		output, err := exec.Command("lxc-info", "-n", container.ID).CombinedOutput()
-		if err != nil {
-			return err
-		}
-		if !strings.Contains(string(output), "RUNNING") {
-			utils.Debugf("Container %s was supposed to be running but is not.", container.ID)
-			if runtime.config.AutoRestart {
-				utils.Debugf("Restarting")
-				container.State.SetGhost(false)
-				container.State.SetStopped(0)
-				if err := container.Start(); err != nil {
-					return err
-				}
-			} else {
-				utils.Debugf("Marking as stopped")
-				container.State.SetStopped(-127)
-				if err := container.ToDisk(); err != nil {
-					return err
-				}
-			}
-		} else {
-			utils.Debugf("Reconnecting to container %v", container.ID)
+	// if container.State.IsRunning() {
+	// 	output, err := exec.Command("lxc-info", "-n", container.ID).CombinedOutput()
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	if !strings.Contains(string(output), "RUNNING") {
+	// 		utils.Debugf("Container %s was supposed to be running but is not.", container.ID)
+	// 		if runtime.config.AutoRestart {
+	// 			utils.Debugf("Restarting")
+	// 			container.State.SetGhost(false)
+	// 			container.State.SetStopped(0)
+	// 			if err := container.Start(); err != nil {
+	// 				return err
+	// 			}
+	// 		} else {
+	// 			utils.Debugf("Marking as stopped")
+	// 			container.State.SetStopped(-127)
+	// 			if err := container.ToDisk(); err != nil {
+	// 				return err
+	// 			}
+	// 		}
+	// 	} else {
+	// 		utils.Debugf("Reconnecting to container %v", container.ID)
 
-			if err := container.allocateNetwork(); err != nil {
-				return err
-			}
+	// 		if err := container.allocateNetwork(); err != nil {
+	// 			return err
+	// 		}
 
-			container.waitLock = make(chan struct{})
+	// 		container.waitLock = make(chan struct{})
 
-			//			go container.monitor()
-		}
-	}
+	// 		//			go container.monitor()
+	// 	}
+	// }
 	return nil
 }
 
@@ -195,15 +195,6 @@ func (runtime *Runtime) ensureName(container *Container) error {
 			}
 		}
 	}
-	return nil
-}
-
-func (runtime *Runtime) LogToDisk(src *utils.WriteBroadcaster, dst, stream string) error {
-	log, err := os.OpenFile(dst, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
-	if err != nil {
-		return err
-	}
-	src.AddWriter(log, stream)
 	return nil
 }
 

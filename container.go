@@ -12,7 +12,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"net"
+	_ "net"
 	"os"
 	"os/exec"
 	"path"
@@ -40,8 +40,8 @@ type Container struct {
 	process execdriver.Process
 
 	Config *Config
-	State  State
-	Image  string
+	//	State  State
+	Image string
 
 	network         *NetworkInterface
 	NetworkSettings *NetworkSettings
@@ -117,8 +117,6 @@ type BindMap struct {
 }
 
 var (
-	ErrContainerStart           = errors.New("The container failed to start. Unkown error")
-	ErrContainerStartTimeout    = errors.New("The container failed to start due to timed out.")
 	ErrInvalidWorikingDirectory = errors.New("The working directory is invalid. It needs to be an absolute path.")
 	ErrConflictAttachDetach     = errors.New("Conflicting options: -a and -d")
 	ErrConflictDetachAutoRemove = errors.New("Conflicting options: -rm and -d")
@@ -395,67 +393,6 @@ func (container *Container) Start() (err error) {
 	}
 
 	return container.process.Exec(opts)
-
-	// // Setup logging of stdout and stderr to disk
-	// if err := container.runtime.LogToDisk(container.stdout, container.logPath("json"), "stdout"); err != nil {
-	// 	return err
-	// }
-	// if err := container.runtime.LogToDisk(container.stderr, container.logPath("json"), "stderr"); err != nil {
-	// 	return err
-	// }
-
-	// container.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-
-	// if container.Config.Tty {
-	// 	err = container.startPty()
-	// } else {
-	// 	err = container.start()
-	// }
-	// if err != nil {
-	// 	return err
-	// }
-	// // FIXME: save state on disk *first*, then converge
-	// // this way disk state is used as a journal, eg. we can restore after crash etc.
-	// container.State.SetRunning(container.cmd.Process.Pid)
-
-	// // Init the lock
-	// container.waitLock = make(chan struct{})
-
-	// container.ToDisk()
-	// go container.monitor()
-
-	// defer utils.Debugf("Container running: %v", container.State.IsRunning())
-	// // We wait for the container to be fully running.
-	// // Timeout after 5 seconds. In case of broken pipe, just retry.
-	// // Note: The container can run and finish correctly before
-	// //       the end of this loop
-	// for now := time.Now(); time.Since(now) < 5*time.Second; {
-	// 	// If the container dies while waiting for it, just return
-	// 	if !container.State.IsRunning() {
-	// 		return nil
-	// 	}
-	// 	output, err := exec.Command("lxc-info", "-s", "-n", container.ID).CombinedOutput()
-	// 	if err != nil {
-	// 		utils.Debugf("Error with lxc-info: %s (%s)", err, output)
-
-	// 		output, err = exec.Command("lxc-info", "-s", "-n", container.ID).CombinedOutput()
-	// 		if err != nil {
-	// 			utils.Debugf("Second Error with lxc-info: %s (%s)", err, output)
-	// 			return err
-	// 		}
-
-	// 	}
-	// 	if strings.Contains(string(output), "RUNNING") {
-	// 		return nil
-	// 	}
-	// 	utils.Debugf("Waiting for the container to start (running: %v): %s", container.State.IsRunning(), bytes.TrimSpace(output))
-	// 	time.Sleep(50 * time.Millisecond)
-	// }
-
-	// if container.State.IsRunning() {
-	// 	return ErrContainerStartTimeout
-	// }
-	// return ErrContainerStart
 }
 
 func (container *Container) getBindMap() (map[string]BindMap, error) {
@@ -735,31 +672,31 @@ func (container *Container) allocateNetwork() error {
 		iface *NetworkInterface
 		err   error
 	)
-	if container.State.IsGhost() {
-		if manager := container.runtime.networkManager; manager.disabled {
-			iface = &NetworkInterface{disabled: true}
-		} else {
-			iface = &NetworkInterface{
-				IPNet:   net.IPNet{IP: net.ParseIP(container.NetworkSettings.IPAddress), Mask: manager.bridgeNetwork.Mask},
-				Gateway: manager.bridgeNetwork.IP,
-				manager: manager,
-			}
-			if iface != nil && iface.IPNet.IP != nil {
-				ipNum := ipToInt(iface.IPNet.IP)
-				manager.ipAllocator.inUse[ipNum] = struct{}{}
-			} else {
-				iface, err = container.runtime.networkManager.Allocate()
-				if err != nil {
-					return err
-				}
-			}
-		}
-	} else {
-		iface, err = container.runtime.networkManager.Allocate()
-		if err != nil {
-			return err
-		}
+	// if container.State.IsGhost() {
+	// 	if manager := container.runtime.networkManager; manager.disabled {
+	// 		iface = &NetworkInterface{disabled: true}
+	// 	} else {
+	// 		iface = &NetworkInterface{
+	// 			IPNet:   net.IPNet{IP: net.ParseIP(container.NetworkSettings.IPAddress), Mask: manager.bridgeNetwork.Mask},
+	// 			Gateway: manager.bridgeNetwork.IP,
+	// 			manager: manager,
+	// 		}
+	// 		if iface != nil && iface.IPNet.IP != nil {
+	// 			ipNum := ipToInt(iface.IPNet.IP)
+	// 			manager.ipAllocator.inUse[ipNum] = struct{}{}
+	// 		} else {
+	// 			iface, err = container.runtime.networkManager.Allocate()
+	// 			if err != nil {
+	// 				return err
+	// 			}
+	// 		}
+	// 	}
+	// } else {
+	iface, err = container.runtime.networkManager.Allocate()
+	if err != nil {
+		return err
 	}
+	// }
 
 	if container.Config.PortSpecs != nil {
 		utils.Debugf("Migrating port mappings for container: %s", strings.Join(container.Config.PortSpecs, ", "))
@@ -777,21 +714,21 @@ func (container *Container) allocateNetwork() error {
 		bindings  = make(map[Port][]PortBinding)
 	)
 
-	if !container.State.IsGhost() {
-		if container.Config.ExposedPorts != nil {
-			portSpecs = container.Config.ExposedPorts
-		}
-		if container.hostConfig.PortBindings != nil {
-			bindings = container.hostConfig.PortBindings
-		}
-	} else {
-		if container.NetworkSettings.Ports != nil {
-			for port, binding := range container.NetworkSettings.Ports {
-				portSpecs[port] = struct{}{}
-				bindings[port] = binding
-			}
-		}
+	// if !container.State.IsGhost() {
+	if container.Config.ExposedPorts != nil {
+		portSpecs = container.Config.ExposedPorts
 	}
+	if container.hostConfig.PortBindings != nil {
+		bindings = container.hostConfig.PortBindings
+	}
+	// } else {
+	// 	if container.NetworkSettings.Ports != nil {
+	// 		for port, binding := range container.NetworkSettings.Ports {
+	// 			portSpecs[port] = struct{}{}
+	// 			bindings[port] = binding
+	// 		}
+	// 	}
+	// }
 
 	container.NetworkSettings.PortMapping = nil
 
@@ -848,60 +785,6 @@ func (container *Container) waitLxc() error {
 	}
 }
 
-// func (container *Container) monitor() {
-// 	// Wait for the program to exit
-
-// 	// If the command does not exist, try to wait via lxc
-// 	// (This probably happens only for ghost containers, i.e. containers that were running when Docker started)
-// 	if container.cmd == nil {
-// 		utils.Debugf("monitor: waiting for container %s using waitLxc", container.ID)
-// 		if err := container.waitLxc(); err != nil {
-// 			utils.Errorf("monitor: while waiting for container %s, waitLxc had a problem: %s", container.ID, err)
-// 		}
-// 	} else {
-// 		utils.Debugf("monitor: waiting for container %s using cmd.Wait", container.ID)
-// 		if err := container.cmd.Wait(); err != nil {
-// 			// Since non-zero exit status and signal terminations will cause err to be non-nil,
-// 			// we have to actually discard it. Still, log it anyway, just in case.
-// 			utils.Debugf("monitor: cmd.Wait reported exit status %s for container %s", err, container.ID)
-// 		}
-// 	}
-// 	utils.Debugf("monitor: container %s finished", container.ID)
-
-// 	exitCode := -1
-// 	if container.cmd != nil {
-// 		exitCode = container.cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
-// 	}
-
-// 	if container.runtime != nil && container.runtime.srv != nil {
-// 		container.runtime.srv.LogEvent("die", container.ID, container.runtime.repositories.ImageName(container.Image))
-// 	}
-
-// 	// Cleanup
-// 	container.cleanup()
-
-// 	// Re-create a brand new stdin pipe once the container exited
-// 	if container.Config.OpenStdin {
-// 		container.stdin, container.stdinPipe = io.Pipe()
-// 	}
-
-// 	// Report status back
-// 	container.State.SetStopped(exitCode)
-
-// 	// Release the lock
-// 	close(container.waitLock)
-
-// 	if err := container.ToDisk(); err != nil {
-// 		// FIXME: there is a race condition here which causes this to fail during the unit tests.
-// 		// If another goroutine was waiting for Wait() to return before removing the container's root
-// 		// from the filesystem... At this point it may already have done so.
-// 		// This is because State.setStopped() has already been called, and has caused Wait()
-// 		// to return.
-// 		// FIXME: why are we serializing running state to disk in the first place?
-// 		//log.Printf("%s: Failed to dump configuration to the disk: %s", container.ID, err)
-// 	}
-// }
-
 func (container *Container) cleanup() {
 	container.releaseNetwork()
 
@@ -939,9 +822,9 @@ func (container *Container) kill(sig int) error {
 	container.Lock()
 	defer container.Unlock()
 
-	if !container.State.IsRunning() {
-		return nil
-	}
+	// if !container.State.IsRunning() {
+	// 	return nil
+	// }
 
 	if output, err := exec.Command("lxc-kill", "-n", container.ID, strconv.Itoa(sig)).CombinedOutput(); err != nil {
 		log.Printf("error killing container %s (%s, %s)", utils.TruncateID(container.ID), output, err)
@@ -952,9 +835,9 @@ func (container *Container) kill(sig int) error {
 }
 
 func (container *Container) Kill() error {
-	if !container.State.IsRunning() {
-		return nil
-	}
+	// if !container.State.IsRunning() {
+	// 	return nil
+	// }
 
 	// 1. Send SIGKILL
 	if err := container.kill(9); err != nil {
@@ -977,9 +860,9 @@ func (container *Container) Kill() error {
 }
 
 func (container *Container) Stop(seconds int) error {
-	if !container.State.IsRunning() {
-		return nil
-	}
+	// if !container.State.IsRunning() {
+	// 	return nil
+	// }
 
 	// 1. Send a SIGTERM
 	if err := container.kill(15); err != nil {
@@ -1011,7 +894,8 @@ func (container *Container) Restart(seconds int) error {
 // Wait blocks until the container stops running, then returns its exit code.
 func (container *Container) Wait() int {
 	<-container.waitLock
-	return container.State.GetExitCode()
+	return 0
+	// return container.State.GetExitCode()
 }
 
 func (container *Container) Resize(h, w int) error {

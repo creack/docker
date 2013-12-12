@@ -1499,7 +1499,7 @@ func (cli *DockerCli) CmdDiff(args ...string) error {
 
 func (cli *DockerCli) CmdLogs(args ...string) error {
 	cmd := cli.Subcmd("logs", "CONTAINER", "Fetch the logs of a container")
-	follow := cmd.Bool("f", false, "Follow log output")
+	//	follow := cmd.Bool("f", false, "Follow log output")
 	if err := cmd.Parse(args); err != nil {
 		return nil
 	}
@@ -1523,9 +1523,9 @@ func (cli *DockerCli) CmdLogs(args ...string) error {
 	v.Set("logs", "1")
 	v.Set("stdout", "1")
 	v.Set("stderr", "1")
-	if *follow && container.State.Running {
-		v.Set("stream", "1")
-	}
+	// if *follow && container.State.Running {
+	// 	v.Set("stream", "1")
+	// }
 
 	if err := cli.hijack("POST", "/containers/"+name+"/attach?"+v.Encode(), container.Config.Tty, nil, cli.out, cli.err, nil); err != nil {
 		return err
@@ -1556,9 +1556,9 @@ func (cli *DockerCli) CmdAttach(args ...string) error {
 		return err
 	}
 
-	if !container.State.IsRunning() {
-		return fmt.Errorf("Impossible to attach to a stopped container, start it first")
-	}
+	// if !container.State.IsRunning() {
+	// 	return fmt.Errorf("Impossible to attach to a stopped container, start it first")
+	// }
 
 	if container.Config.Tty && cli.isTerminal {
 		if err := cli.monitorTtySize(cmd.Arg(0)); err != nil {
@@ -2491,7 +2491,8 @@ func getExitCode(cli *DockerCli, containerId string) (bool, int, error) {
 	if err := json.Unmarshal(body, c); err != nil {
 		return false, -1, err
 	}
-	return c.State.IsRunning(), c.State.GetExitCode(), nil
+	return true, 0, nil
+	//	return c.State.IsRunning(), c.State.GetExitCode(), nil
 }
 
 func NewDockerCli(in io.ReadCloser, out, err io.Writer, proto, addr string) *DockerCli {

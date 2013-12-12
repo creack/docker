@@ -1,7 +1,9 @@
 package lxc
 
 import (
+	"bufio"
 	"encoding/json"
+	"fmt"
 	"github.com/dotcloud/docker/execdriver"
 	"github.com/dotcloud/docker/utils"
 	"github.com/kr/pty"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const DriverName = "lxc"
@@ -84,7 +87,63 @@ type Lxc struct {
 	ptyMaster io.Closer
 
 	driver *Driver
+
+	state execdriver.State
 }
+
+// func (container *Container) monitor() {
+// 	// Wait for the program to exit
+
+// 	// If the command does not exist, try to wait via lxc
+// 	// (This probably happens only for ghost containers, i.e. containers that were running when Docker started)
+// 	if container.cmd == nil {
+// 		utils.Debugf("monitor: waiting for container %s using waitLxc", container.ID)
+// 		if err := container.waitLxc(); err != nil {
+// 			utils.Errorf("monitor: while waiting for container %s, waitLxc had a problem: %s", container.ID, err)
+// 		}
+// 	} else {
+// 		utils.Debugf("monitor: waiting for container %s using cmd.Wait", container.ID)
+// 		if err := container.cmd.Wait(); err != nil {
+// 			// Since non-zero exit status and signal terminations will cause err to be non-nil,
+// 			// we have to actually discard it. Still, log it anyway, just in case.
+// 			utils.Debugf("monitor: cmd.Wait reported exit status %s for container %s", err, container.ID)
+// 		}
+// 	}
+// 	utils.Debugf("monitor: container %s finished", container.ID)
+
+// 	exitCode := -1
+// 	if container.cmd != nil {
+// 		exitCode = container.cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
+// 	}
+
+// 	if container.runtime != nil && container.runtime.srv != nil {
+// 		container.runtime.srv.LogEvent("die", container.ID, container.runtime.repositories.ImageName(container.Image))
+// 	}
+
+// 	// Cleanup
+// 	container.cleanup()
+
+// 	// Re-create a brand new stdin pipe once the container exited
+// 	if container.Config.OpenStdin {
+// 		container.stdin, container.stdinPipe = io.Pipe()
+// 	}
+
+// 	// Report status back
+// 	container.State.SetStopped(exitCode)
+
+// 	// Release the lock
+// 	close(container.waitLock)
+
+// 	if err := container.ToDisk(); err != nil {
+// 		// FIXME: there is a race condition here which causes this to fail during the unit tests.
+// 		// If another goroutine was waiting for Wait() to return before removing the container's root
+// 		// from the filesystem... At this point it may already have done so.
+// 		// This is because State.setStopped() has already been called, and has caused Wait()
+// 		// to return.
+// 		// FIXME: why are we serializing running state to disk in the first place?
+// 		//log.Printf("%s: Failed to dump configuration to the disk: %s", container.ID, err)
+// 	}
+// }
 
 func (l *Lxc) monitor() error {
 	l.cmd.Wait()
@@ -337,6 +396,42 @@ func (l *Lxc) cgroupCheck(opt *execdriver.Options) error {
 	return nil
 }
 
+func (l *Lxc) logPath(ID, name string) string {
+	return path.Join(l.root, fmt.Sprintf("%s-%s.log", ID, name))
+}
+
+func (l *Lxc) waitForStart(ID string) error {
+	// We wait for the container to be fully running.
+	// Timeout after 5 seconds. In case of broken pipe, just retry.
+	// Note: The container can run and finish correctly before
+	//       the end of this loop
+	for now := time.Now(); time.Since(now) < 5*time.Second; {
+		// If the container dies while waiting for it, just return
+		// FIXME: Double check this does return false positive (i.e. not yet started)
+		if l.state.IsRunning() {
+			return nil
+		}
+
+		output, err := exec.Command("lxc-info", "-s", "-n", ID).CombinedOutput()
+		if err != nil {
+			utils.Debugf("Error with lxc-info: %s (%s)", err, output)
+
+			output, err = exec.Command("lxc-info", "-s", "-n", ID).CombinedOutput()
+			if err != nil {
+				utils.Debugf("Second Error with lxc-info: %s (%s)", err, output)
+				return err
+			}
+
+		}
+		if strings.Contains(string(output), "RUNNING") {
+			l.state.SetRunning(l.cmd.Process.Pid)
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return execdriver.ErrProcessStartTimeout
+}
+
 func (l *Lxc) Exec(options *execdriver.Options) error {
 	var lxcStart = "lxc-start"
 
@@ -417,6 +512,15 @@ func (l *Lxc) Exec(options *execdriver.Options) error {
 	l.cmd = exec.Command(params[0], params[1:]...)
 	l.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
+	// LOGS --------------------
+	log, err := os.OpenFile(l.logPath(options.ID, "json"), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	l.stdout.AddWriter(log, "stdout")
+	l.stderr.AddWriter(log, "stderr")
+	// !LOGS -------------------
+
 	starter := l.start
 	if options.Tty {
 		starter = l.startPty
@@ -431,6 +535,75 @@ func (l *Lxc) Exec(options *execdriver.Options) error {
 
 	go l.monitor()
 
+	if err := l.waitForStart(options.ID); err != nil {
+		return err
+	}
+
+	if !l.state.IsRunning() {
+		return execdriver.ErrProcessStartTimeout
+	}
+
+	if err := l.stateToDisk(); err != nil {
+		return err
+	}
+	if err := l.loadFromDisk(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (l *Lxc) stateToDisk() error {
+	f, err := os.OpenFile(path.Join(l.root, "state"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = fmt.Fprintf(f, "%v\t%d\t%d\t%s\t%s\n", l.state.IsRunning(), l.state.GetPid(),
+		l.state.GetExitCode(), l.state.GetStartedAt().UTC().Format(time.RFC3339), l.state.GetFinishedAt().UTC().Format(time.RFC3339))
+	return err
+}
+
+func (l *Lxc) loadFromDisk() error {
+	var (
+		running          bool
+		pid              int
+		exitcode         int
+		startStr, endStr string
+		start, end       time.Time
+	)
+
+	// open the file
+	f, err := os.Open(path.Join(l.root, "state"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Create a scanner
+	r := bufio.NewScanner(f)
+	// Scan until the end
+	for r.Scan() {
+	}
+
+	// r.Text() is now the last line of the file, scanf it into variables
+	_, err = fmt.Sscanf(r.Text(), "%v\t%d\t%d\t%s\t%s\n", &running, &pid, &exitcode, &startStr, &endStr)
+	if err != nil {
+		return err
+	}
+
+	// Parse the time as string into time.Time
+	start, err = time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		return err
+	}
+	end, err = time.Parse(time.RFC3339, endStr)
+	if err != nil {
+		return err
+	}
+
+	// Create a new State from the result
+	l.state = *execdriver.NewState(running, pid, exitcode, start, end)
 	return nil
 }
 

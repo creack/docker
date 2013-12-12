@@ -713,9 +713,9 @@ func (srv *Server) Containers(all, size bool, n int, since, before string) []API
 	}, -1)
 
 	for _, container := range srv.runtime.List() {
-		if !container.State.IsRunning() && !all && n == -1 && since == "" && before == "" {
-			continue
-		}
+		// if !container.State.IsRunning() && !all && n == -1 && since == "" && before == "" {
+		// 	continue
+		// }
 		if before != "" && !foundBefore {
 			if container.ID == before || utils.TruncateID(container.ID) == before {
 				foundBefore = true
@@ -743,7 +743,7 @@ func createAPIContainer(names []string, container *Container, size bool, runtime
 	c.Image = runtime.repositories.ImageName(container.Image)
 	//	c.Command = fmt.Sprintf("%s %s", container.Path, strings.Join(container.Args, " "))
 	c.Created = container.Created.Unix()
-	c.Status = container.State.String()
+	// c.Status = container.State.String()
 	c.Ports = container.NetworkSettings.PortMappingAPI()
 	if size {
 		c.SizeRw, c.SizeRootFs = container.GetSize()
@@ -1385,9 +1385,9 @@ func (srv *Server) ContainerDestroy(name string, removeVolume, removeLink bool) 
 	}
 
 	if container != nil {
-		if container.State.IsRunning() {
-			return fmt.Errorf("Impossible to remove a running container, please stop it first")
-		}
+		// if container.State.IsRunning() {
+		// 	return fmt.Errorf("Impossible to remove a running container, please stop it first")
+		// }
 		volumes := make(map[string]struct{})
 		binds := make(map[string]struct{})
 
@@ -1561,7 +1561,8 @@ func (srv *Server) ImageDelete(name string, autoPrune bool) ([]APIRmi, error) {
 
 	// Prevent deletion if image is used by a running container
 	for _, container := range srv.runtime.List() {
-		if container.State.IsRunning() {
+		//		if container.State.IsRunning() {
+		if true {
 			parent, err := srv.runtime.repositories.LookupImage(container.Image)
 			if err != nil {
 				return nil, err
@@ -1790,9 +1791,9 @@ func (srv *Server) ContainerAttach(name string, logs, stream, stdin, stdout, std
 
 	//stream
 	if stream {
-		if container.State.IsGhost() {
-			return fmt.Errorf("Impossible to attach to a ghost container")
-		}
+		// if container.State.IsGhost() {
+		// 	return fmt.Errorf("Impossible to attach to a ghost container")
+		// }
 
 		var (
 			cStdin           io.ReadCloser

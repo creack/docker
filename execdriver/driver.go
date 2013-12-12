@@ -2,12 +2,15 @@ package execdriver
 
 import (
 	"errors"
+	"fmt"
 	"io"
 )
 
 var (
-	ErrAlreadyRunning = errors.New("exec: already started")
-	ErrDriverNotFound = errors.New("exec: driver not found")
+	ErrAlreadyRunning      = errors.New("exec: already started")
+	ErrDriverNotFound      = errors.New("exec: driver not found")
+	ErrProcessStart        = errors.New("The process failed to start. Unkown error")
+	ErrProcessStartTimeout = errors.New("The process failed to start due to timed out.")
 )
 
 type Options struct {
@@ -51,6 +54,9 @@ var priorities = []string{
 }
 
 func New(name, root string) (d Driver, err error) {
+	if _, exists := Drivers[name]; !exists {
+		return nil, ErrDriverNotFound
+	}
 	for _, n := range append([]string{name}, priorities...) {
 		init, exists := Drivers[n]
 		if !exists {
@@ -58,8 +64,10 @@ func New(name, root string) (d Driver, err error) {
 		}
 		d, err = init(root)
 		if err != nil {
+			fmt.Printf("--------> %s\n", err)
 			continue
 		}
+		break
 	}
 	return d, err
 }

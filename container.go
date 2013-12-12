@@ -23,11 +23,6 @@ import (
 	"time"
 )
 
-var (
-	ErrNotATTY = errors.New("The PTY is not a file")
-	ErrNoTTY   = errors.New("No PTY found")
-)
-
 type Container struct {
 	sync.Mutex
 	root   string // Path to the "home" of the container, including metadata.
@@ -52,12 +47,6 @@ type Container struct {
 	HostsPath      string
 	Name           string
 	Driver         string
-
-	stdout    *utils.WriteBroadcaster
-	stderr    *utils.WriteBroadcaster
-	stdin     io.ReadCloser
-	stdinPipe io.WriteCloser
-	ptyMaster io.Closer
 
 	runtime *Runtime
 
@@ -596,43 +585,19 @@ func (container *Container) Run() error {
 	return nil
 }
 
-func (container *Container) Output() (output []byte, err error) {
-	pipe, err := container.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	defer pipe.Close()
-	if err := container.Start(); err != nil {
-		return nil, err
-	}
-	output, err = ioutil.ReadAll(pipe)
-	container.Wait()
-	return output, err
-}
-
-// Container.StdinPipe returns a WriteCloser which can be used to feed data
-// to the standard input of the container's active process.
-// Container.StdoutPipe and Container.StderrPipe each return a ReadCloser
-// which can be used to retrieve the standard output (and error) generated
-// by the container's active process. The output (and error) are actually
-// copied and delivered to all StdoutPipe and StderrPipe consumers, using
-// a kind of "broadcaster".
-
-func (container *Container) StdinPipe() (io.WriteCloser, error) {
-	return container.stdinPipe, nil
-}
-
-func (container *Container) StdoutPipe() (io.ReadCloser, error) {
-	reader, writer := io.Pipe()
-	container.stdout.AddWriter(writer, "")
-	return utils.NewBufReader(reader), nil
-}
-
-func (container *Container) StderrPipe() (io.ReadCloser, error) {
-	reader, writer := io.Pipe()
-	container.stderr.AddWriter(writer, "")
-	return utils.NewBufReader(reader), nil
-}
+// func (container *Container) Output() (output []byte, err error) {
+// 	pipe, err := container.StdoutPipe()
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	defer pipe.Close()
+// 	if err := container.Start(); err != nil {
+// 		return nil, err
+// 	}
+// 	output, err = ioutil.ReadAll(pipe)
+// 	container.Wait()
+// 	return output, err
+// }
 
 func (container *Container) buildHostnameAndHostsFiles(IP string) {
 	container.HostnamePath = path.Join(container.root, "hostname")
@@ -766,20 +731,6 @@ func (container *Container) releaseNetwork() {
 	container.NetworkSettings = &NetworkSettings{}
 }
 
-// FIXME: replace this with a control socket within dockerinit
-func (container *Container) waitLxc() error {
-	for {
-		output, err := exec.Command("lxc-info", "-n", container.ID).CombinedOutput()
-		if err != nil {
-			return err
-		}
-		if !strings.Contains(string(output), "RUNNING") {
-			return nil
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-}
-
 func (container *Container) cleanup() {
 	container.releaseNetwork()
 
@@ -787,24 +738,6 @@ func (container *Container) cleanup() {
 	if container.activeLinks != nil {
 		for _, link := range container.activeLinks {
 			link.Disable()
-		}
-	}
-
-	if container.Config.OpenStdin {
-		if err := container.stdin.Close(); err != nil {
-			utils.Errorf("%s: Error close stdin: %s", container.ID, err)
-		}
-	}
-	if err := container.stdout.CloseWriters(); err != nil {
-		utils.Errorf("%s: Error close stdout: %s", container.ID, err)
-	}
-	if err := container.stderr.CloseWriters(); err != nil {
-		utils.Errorf("%s: Error close stderr: %s", container.ID, err)
-	}
-
-	if container.ptyMaster != nil {
-		if err := container.ptyMaster.Close(); err != nil {
-			utils.Errorf("%s: Error closing Pty master: %s", container.ID, err)
 		}
 	}
 
@@ -894,9 +827,9 @@ func (container *Container) Wait() int {
 }
 
 func (container *Container) Resize(h, w int) error {
-	pty, ok := container.ptyMaster.(*os.File)
-	if !ok {
-		return fmt.Errorf("ptyMaster does not have Fd() method")
+	pty, err := container.process.GetPty()
+	if err != nil {
+		return err
 	}
 	return term.SetWinsize(pty.Fd(), &term.Winsize{Height: uint16(h), Width: uint16(w)})
 }
@@ -1049,14 +982,4 @@ func (container *Container) Copy(resource string) (archive.Archive, error) {
 func (container *Container) Exposes(p Port) bool {
 	_, exists := container.Config.ExposedPorts[p]
 	return exists
-}
-
-func (container *Container) GetPtyMaster() (*os.File, error) {
-	if container.ptyMaster == nil {
-		return nil, ErrNoTTY
-	}
-	if pty, ok := container.ptyMaster.(*os.File); ok {
-		return pty, nil
-	}
-	return nil, ErrNotATTY
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 )
 
 var (
@@ -11,6 +12,9 @@ var (
 	ErrDriverNotFound      = errors.New("exec: driver not found")
 	ErrProcessStart        = errors.New("The process failed to start. Unkown error")
 	ErrProcessStartTimeout = errors.New("The process failed to start due to timed out.")
+
+	ErrNotATTY = errors.New("The PTY is not a file")
+	ErrNoTTY   = errors.New("No PTY found")
 )
 
 type Options struct {
@@ -42,6 +46,10 @@ type Process interface {
 	StderrPipe() (io.ReadCloser, error)
 
 	Attach(stdin io.ReadCloser, stdinCloser io.Closer, stdout io.Writer, stderr io.Writer) chan error
+
+	GetPty() (*os.File, error)
+	GetState() *State
+	String() string
 }
 
 type InitFunc func(root string) (Driver, error)

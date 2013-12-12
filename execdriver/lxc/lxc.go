@@ -74,6 +74,8 @@ func rootIsShared() bool {
 type Lxc struct {
 	sync.Mutex
 
+	ID string // We can store the ID as a Lxc instance is tight to a Container instance
+
 	root     string
 	cmd      *exec.Cmd
 	Path     string
@@ -91,68 +93,91 @@ type Lxc struct {
 	state execdriver.State
 }
 
-// func (container *Container) monitor() {
-// 	// Wait for the program to exit
+func (l *Lxc) GetState() *execdriver.State {
+	return &l.state
+}
 
-// 	// If the command does not exist, try to wait via lxc
-// 	// (This probably happens only for ghost containers, i.e. containers that were running when Docker started)
-// 	if container.cmd == nil {
-// 		utils.Debugf("monitor: waiting for container %s using waitLxc", container.ID)
-// 		if err := container.waitLxc(); err != nil {
-// 			utils.Errorf("monitor: while waiting for container %s, waitLxc had a problem: %s", container.ID, err)
-// 		}
-// 	} else {
-// 		utils.Debugf("monitor: waiting for container %s using cmd.Wait", container.ID)
-// 		if err := container.cmd.Wait(); err != nil {
-// 			// Since non-zero exit status and signal terminations will cause err to be non-nil,
-// 			// we have to actually discard it. Still, log it anyway, just in case.
-// 			utils.Debugf("monitor: cmd.Wait reported exit status %s for container %s", err, container.ID)
-// 		}
-// 	}
-// 	utils.Debugf("monitor: container %s finished", container.ID)
+func (l *Lxc) String() string {
+	return fmt.Sprintf("%s %s", l.Path, strings.Join(l.Args, " "))
+}
 
-// 	exitCode := -1
-// 	if container.cmd != nil {
-// 		exitCode = container.cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
-// 	}
+func (l *Lxc) GetPty() (*os.File, error) {
+	if l.ptyMaster == nil {
+		return nil, execdriver.ErrNoTTY
+	}
+	if pty, ok := l.ptyMaster.(*os.File); ok {
+		return pty, nil
+	}
+	return nil, execdriver.ErrNotATTY
+}
 
-// 	if container.runtime != nil && container.runtime.srv != nil {
-// 		container.runtime.srv.LogEvent("die", container.ID, container.runtime.repositories.ImageName(container.Image))
-// 	}
-
-// 	// Cleanup
-// 	container.cleanup()
-
-// 	// Re-create a brand new stdin pipe once the container exited
-// 	if container.Config.OpenStdin {
-// 		container.stdin, container.stdinPipe = io.Pipe()
-// 	}
-
-// 	// Report status back
-// 	container.State.SetStopped(exitCode)
-
-// 	// Release the lock
-// 	close(container.waitLock)
-
-// 	if err := container.ToDisk(); err != nil {
-// 		// FIXME: there is a race condition here which causes this to fail during the unit tests.
-// 		// If another goroutine was waiting for Wait() to return before removing the container's root
-// 		// from the filesystem... At this point it may already have done so.
-// 		// This is because State.setStopped() has already been called, and has caused Wait()
-// 		// to return.
-// 		// FIXME: why are we serializing running state to disk in the first place?
-// 		//log.Printf("%s: Failed to dump configuration to the disk: %s", container.ID, err)
-// 	}
-// }
+// FIXME: replace this with a control socket within dockerinit
+func (l *Lxc) waitLxc() error {
+	for {
+		output, err := exec.Command("lxc-info", "-n", l.ID).CombinedOutput()
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(output), "RUNNING") {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
 
 func (l *Lxc) monitor() error {
-	l.cmd.Wait()
-	l.cmd = nil
+	// Wait for the program to exit
+
+	// If the command does not exist, try to wait via lxc
+	// (This probably happens only for ghost containers, i.e. containers that were running when Docker started)
+	if l.cmd == nil {
+		utils.Debugf("monitor: waiting for container %s using waitLxc", l.ID)
+		if err := l.waitLxc(); err != nil {
+			utils.Errorf("monitor: while waiting for container %s, waitLxc had a problem: %s", l.ID, err)
+		}
+	} else {
+		utils.Debugf("monitor: waiting for container %s using cmd.Wait", l.ID)
+		if err := l.cmd.Wait(); err != nil {
+			// Since non-zero exit status and signal terminations will cause err to be non-nil,
+			// we have to actually discard it. Still, log it anyway, just in case.
+			utils.Debugf("monitor: cmd.Wait reported exit status %s for container %s", err, l.ID)
+		}
+	}
+	utils.Debugf("monitor: container %s finished", l.ID)
+
+	exitCode := -1
+	if l.cmd != nil {
+		exitCode = l.cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
+	}
+
 	l.stdout.CloseWriters()
 	l.stderr.CloseWriters()
 	l.stdin.Close()
 	l.stdinPipe.Close()
 	l.ptyMaster.Close()
+	l.cmd = nil
+
+	// 	if container.runtime != nil && container.runtime.srv != nil {
+	// 		container.runtime.srv.LogEvent("die", container.ID, container.runtime.repositories.ImageName(container.Image))
+	// 	}
+
+	// 	// Cleanup
+	// 	container.cleanup()
+
+	// Re-create a brand new stdin pipe once the container exited
+	if l.stdin != nil {
+		l.stdin, l.stdinPipe = io.Pipe()
+	}
+
+	// Report status back
+	l.state.SetStopped(exitCode)
+
+	if err := l.stateToDisk(); err != nil {
+		return fmt.Errorf("%s: Failed to dump configuration to the disk: %s", l.ID, err)
+	}
+
+	// Release the lock
+	close(l.waitLock)
 
 	return nil
 }
@@ -213,6 +238,13 @@ func (l *Lxc) start() error {
 	return l.cmd.Start()
 }
 
+// Lxc.StdinPipe returns a WriteCloser which can be used to feed data
+// to the standard input of the container's active process.
+// Container.StdoutPipe and Container.StderrPipe each return a ReadCloser
+// which can be used to retrieve the standard output (and error) generated
+// by the container's active process. The output (and error) are actually
+// copied and delivered to all StdoutPipe and StderrPipe consumers, using
+// a kind of "broadcaster".
 func (l *Lxc) StdinPipe() (io.WriteCloser, error) {
 	l.stdin, l.stdinPipe = io.Pipe()
 	return l.stdinPipe, nil
@@ -587,8 +619,7 @@ func (l *Lxc) loadFromDisk() error {
 	}
 
 	// r.Text() is now the last line of the file, scanf it into variables
-	_, err = fmt.Sscanf(r.Text(), "%v\t%d\t%d\t%s\t%s\n", &running, &pid, &exitcode, &startStr, &endStr)
-	if err != nil {
+	if _, err = fmt.Sscanf(r.Text(), "%v\t%d\t%d\t%s\t%s\n", &running, &pid, &exitcode, &startStr, &endStr); err != nil {
 		return err
 	}
 

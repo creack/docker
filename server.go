@@ -712,20 +712,23 @@ func (srv *Server) ContainerChanges(name string) ([]archive.Change, error) {
 }
 
 func (srv *Server) Containers(all, size bool, n int, since, before string) []APIContainers {
-	var foundBefore bool
-	var displayed int
-	out := []APIContainers{}
+	var (
+		foundBefore bool
+		displayed   int
+		out         = []APIContainers{}
+		names       = map[string][]string{}
+	)
 
-	names := map[string][]string{}
 	srv.runtime.containerGraph.Walk("/", func(p string, e *graphdb.Entity) error {
 		names[e.ID()] = append(names[e.ID()], p)
 		return nil
 	}, -1)
 
 	for _, container := range srv.runtime.List() {
-		// if !container.State.IsRunning() && !all && n == -1 && since == "" && before == "" {
-		// 	continue
-		// }
+		state := container.process.GetState()
+		if !state.IsRunning() && !all && n == -1 && since == "" && before == "" {
+			continue
+		}
 		if before != "" && !foundBefore {
 			if container.ID == before || utils.TruncateID(container.ID) == before {
 				foundBefore = true
@@ -751,9 +754,12 @@ func createAPIContainer(names []string, container *Container, size bool, runtime
 	}
 	c.Names = names
 	c.Image = runtime.repositories.ImageName(container.Image)
-	//	c.Command = fmt.Sprintf("%s %s", container.Path, strings.Join(container.Args, " "))
+
+	state := container.process.GetState()
+
+	c.Command = container.process.String()
 	c.Created = container.Created.Unix()
-	// c.Status = container.State.String()
+	c.Status = state.String()
 	c.Ports = container.NetworkSettings.PortMappingAPI()
 	if size {
 		c.SizeRw, c.SizeRootFs = container.GetSize()

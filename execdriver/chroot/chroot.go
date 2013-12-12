@@ -8,6 +8,7 @@ import (
 	"github.com/kr/pty"
 	"io"
 	"io/ioutil"
+	"os"
 	"os/exec"
 	"path"
 	"syscall"
@@ -326,6 +327,18 @@ func (c *Chroot) generateEnvConfig(rootfs string, env []string) error {
 
 	ioutil.WriteFile(path.Join(rootfs, ".dockerenv"), data, 0600)
 	return nil
+}
+
+func (c *Chroot) String() string {
+	return "not implmeented"
+}
+
+func (c *Chroot) GetState() *execdriver.State {
+	return nil
+}
+
+func (c *Chroot) GetPty() (*os.File, error) {
+	return nil, fmt.Errorf("Not implemented")
 }
 
 func (d *Driver) New(root string, Path string, args []string) execdriver.Process {

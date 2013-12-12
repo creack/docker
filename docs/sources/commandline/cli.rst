@@ -225,8 +225,10 @@ by using the ``git://`` schema.
       -run="": Configuration to be applied when the image is launched with `docker run`.
                (ex: -run='{"Cmd": ["cat", "/world"], "PortSpecs": ["22"]}')
 
-Simple commit of an existing container
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _cli_commit_examples:
+
+Commit an existing container
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
@@ -240,9 +242,32 @@ Simple commit of an existing container
 	REPOSITORY                        TAG                 ID                  CREATED             VIRTUAL SIZE
 	SvenDowideit/testimage            version3            f5283438590d        16 seconds ago      335.7 MB
 	
+Change the command that a container runs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sometimes you have an application container running just a service and you need
+to make a quick change (run bash?) and then change it back.
+
+In this example, we run a container with ``ls`` and then change the image to
+run ``ls /etc``.
+
+.. code-block:: bash
+
+        $ docker run -t -name test ubuntu ls
+        bin  boot  dev  etc  home  lib  lib64  media  mnt  opt  proc  root  run  sbin  selinux  srv  sys  tmp  usr  var
+        $ docker commit -run='{"Cmd": ["ls","/etc"]}' test test2
+        933d16de9e70005304c1717b5c6f2f39d6fd50752834c6f34a155c70790011eb
+        $ docker run -t test2
+        adduser.conf            gshadow          login.defs           rc0.d
+        alternatives            gshadow-         logrotate.d          rc1.d
+        apt                     host.conf        lsb-base             rc2.d
+        ...
 
 Full -run example
 .................
+
+The ``-run`` JSON hash changes the ``Config`` section when running ``docker inspect CONTAINERID``
+or ``config`` when running ``docker inspect IMAGEID``.
 
 (multiline is ok within a single quote ``'``)
 
@@ -900,6 +925,38 @@ containers will not be deleted.
     Usage: docker rmi IMAGE [IMAGE...]
 
     Remove one or more images
+    
+Removing tagged images
+~~~~~~~~~~~~~~~~~~~~~~
+
+Images can be removed either by their short or long ID's, or their image names.
+If an image has more than one name, each of them needs to be removed before the 
+image is removed.
+
+.. code-block:: bash
+
+    $ sudo docker images
+    REPOSITORY                TAG                 IMAGE ID            CREATED             SIZE
+    test1                     latest              fd484f19954f        23 seconds ago      7 B (virtual 4.964 MB)
+    test                      latest              fd484f19954f        23 seconds ago      7 B (virtual 4.964 MB)
+    test2                     latest              fd484f19954f        23 seconds ago      7 B (virtual 4.964 MB)
+
+    $ sudo docker rmi fd484f19954f
+    Error: Conflict, fd484f19954f wasn't deleted
+    2013/12/11 05:47:16 Error: failed to remove one or more images
+
+    $ sudo docker rmi test1
+    Untagged: fd484f19954f4920da7ff372b5067f5b7ddb2fd3830cecd17b96ea9e286ba5b8
+    $ sudo docker rmi test2
+    Untagged: fd484f19954f4920da7ff372b5067f5b7ddb2fd3830cecd17b96ea9e286ba5b8
+
+    $ sudo docker images
+    REPOSITORY                TAG                 IMAGE ID            CREATED             SIZE
+    test1                     latest              fd484f19954f        23 seconds ago      7 B (virtual 4.964 MB)
+    $ sudo docker rmi test
+    Untagged: fd484f19954f4920da7ff372b5067f5b7ddb2fd3830cecd17b96ea9e286ba5b8
+    Deleted: fd484f19954f4920da7ff372b5067f5b7ddb2fd3830cecd17b96ea9e286ba5b8
+
 
 .. _cli_run:
 
@@ -942,6 +999,8 @@ containers will not be deleted.
 the specified image, and then ``'starts'`` it using the specified
 command. That is, ``'docker run'`` is equivalent to the API
 ``/containers/create`` then ``/containers/(id)/start``.
+
+``docker run`` can be used in combination with ``docker commit`` to :ref:`change the command that a container runs <cli_commit_examples>`.
 
 Known Issues (run -volumes-from)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1085,7 +1144,7 @@ in the same mode (rw or ro) as the reference container.
 
 ::
 
-    Usage: docker start [OPTIONS] NAME
+    Usage: docker start [OPTIONS] CONTAINER
 
     Start a stopped container
 

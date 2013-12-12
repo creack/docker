@@ -141,7 +141,8 @@ func postAuth(srv *Server, version float64, w http.ResponseWriter, r *http.Reque
 }
 
 func getVersion(srv *Server, version float64, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
-	return writeJSON(w, http.StatusOK, srv.DockerVersion())
+	srv.Eng.ServeHTTP(w, r)
+	return nil
 }
 
 func postContainersKill(srv *Server, version float64, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
@@ -151,19 +152,11 @@ func postContainersKill(srv *Server, version float64, w http.ResponseWriter, r *
 	if err := parseForm(r); err != nil {
 		return err
 	}
-	name := vars["name"]
-
-	signal := 0
-	if r != nil {
-		if s := r.Form.Get("signal"); s != "" {
-			s, err := strconv.Atoi(s)
-			if err != nil {
-				return err
-			}
-			signal = s
-		}
+	job := srv.Eng.Job("kill", vars["name"])
+	if sig := r.Form.Get("signal"); sig != "" {
+		job.Args = append(job.Args, sig)
 	}
-	if err := srv.ContainerKill(name, signal); err != nil {
+	if err := job.Run(); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -174,10 +167,11 @@ func getContainersExport(srv *Server, version float64, w http.ResponseWriter, r 
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
-	name := vars["name"]
-
-	if err := srv.ContainerExport(name, w); err != nil {
-		utils.Errorf("%s", err)
+	job := srv.Eng.Job("export", vars["name"])
+	if err := job.Stdout.Add(w); err != nil {
+		return err
+	}
+	if err := job.Run(); err != nil {
 		return err
 	}
 	return nil
@@ -714,14 +708,18 @@ func postContainersWait(srv *Server, version float64, w http.ResponseWriter, r *
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
-	name := vars["name"]
-
-	status, err := srv.ContainerWait(name)
+	job := srv.Eng.Job("wait", vars["name"])
+	var statusStr string
+	job.Stdout.AddString(&statusStr)
+	if err := job.Run(); err != nil {
+		return err
+	}
+	// Parse a 16-bit encoded integer to map typical unix exit status.
+	status, err := strconv.ParseInt(statusStr, 10, 16)
 	if err != nil {
 		return err
 	}
-
-	return writeJSON(w, http.StatusOK, &APIWait{StatusCode: status})
+	return writeJSON(w, http.StatusOK, &APIWait{StatusCode: int(status)})
 }
 
 func postContainersResize(srv *Server, version float64, w http.ResponseWriter, r *http.Request, vars map[string]string) error {

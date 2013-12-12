@@ -1,10 +1,16 @@
 package execdriver
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/dotcloud/docker/utils"
+	"os"
 	"sync"
 	"time"
+)
+
+const (
+	DefaultTimeFormat = time.RFC3339
 )
 
 // FIXME: Use only private members and create an API type for the transport
@@ -109,12 +115,60 @@ func (s *State) GetFinishedAt() *time.Time {
 	return &s.finishedAt
 }
 
-func NewState(running bool, pid, exitcode int, start, end time.Time) *State {
+func SaveState(state *State, path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = fmt.Fprintf(f, "%v\t%d\t%d\t%s\t%s\n", state.IsRunning(), state.GetPid(),
+		state.GetExitCode(), state.GetStartedAt().UTC().Format(DefaultTimeFormat), state.GetFinishedAt().UTC().Format(DefaultTimeFormat))
+	return err
+}
+
+func LoadState(path string) (*State, error) {
+	var (
+		running          bool
+		pid              int
+		exitcode         int
+		startStr, endStr string
+		start, end       time.Time
+	)
+
+	// open the file
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// Create a scanner
+	r := bufio.NewScanner(f)
+	// Scan until the end
+	for r.Scan() {
+	}
+
+	// r.Text() is now the last line of the file, scanf it into variables
+	if _, err = fmt.Sscanf(r.Text(), "%v\t%d\t%d\t%s\t%s\n", &running, &pid, &exitcode, &startStr, &endStr); err != nil {
+		return nil, err
+	}
+
+	// Parse the time as string into time.Time
+	start, err = time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		return nil, err
+	}
+	end, err = time.Parse(time.RFC3339, endStr)
+	if err != nil {
+		return nil, err
+	}
+
 	return &State{
 		running:    running,
 		pid:        pid,
 		startedAt:  start,
 		finishedAt: end,
 		exitCode:   exitcode,
-	}
+	}, nil
 }

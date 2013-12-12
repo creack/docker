@@ -1,7 +1,6 @@
 package lxc
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"github.com/dotcloud/docker/execdriver"
@@ -172,7 +171,7 @@ func (l *Lxc) monitor() error {
 	// Report status back
 	l.state.SetStopped(exitCode)
 
-	if err := l.stateToDisk(); err != nil {
+	if err := execdriver.SaveState(&l.state, path.Join(l.root, "state")); err != nil {
 		return fmt.Errorf("%s: Failed to dump configuration to the disk: %s", l.ID, err)
 	}
 
@@ -575,66 +574,9 @@ func (l *Lxc) Exec(options *execdriver.Options) error {
 		return execdriver.ErrProcessStartTimeout
 	}
 
-	if err := l.stateToDisk(); err != nil {
+	if err := execdriver.SaveState(&l.state, path.Join(l.root, "state")); err != nil {
 		return err
 	}
-	if err := l.loadFromDisk(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (l *Lxc) stateToDisk() error {
-	f, err := os.OpenFile(path.Join(l.root, "state"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	_, err = fmt.Fprintf(f, "%v\t%d\t%d\t%s\t%s\n", l.state.IsRunning(), l.state.GetPid(),
-		l.state.GetExitCode(), l.state.GetStartedAt().UTC().Format(time.RFC3339), l.state.GetFinishedAt().UTC().Format(time.RFC3339))
-	return err
-}
-
-func (l *Lxc) loadFromDisk() error {
-	var (
-		running          bool
-		pid              int
-		exitcode         int
-		startStr, endStr string
-		start, end       time.Time
-	)
-
-	// open the file
-	f, err := os.Open(path.Join(l.root, "state"))
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// Create a scanner
-	r := bufio.NewScanner(f)
-	// Scan until the end
-	for r.Scan() {
-	}
-
-	// r.Text() is now the last line of the file, scanf it into variables
-	if _, err = fmt.Sscanf(r.Text(), "%v\t%d\t%d\t%s\t%s\n", &running, &pid, &exitcode, &startStr, &endStr); err != nil {
-		return err
-	}
-
-	// Parse the time as string into time.Time
-	start, err = time.Parse(time.RFC3339, startStr)
-	if err != nil {
-		return err
-	}
-	end, err = time.Parse(time.RFC3339, endStr)
-	if err != nil {
-		return err
-	}
-
-	// Create a new State from the result
-	l.state = *execdriver.NewState(running, pid, exitcode, start, end)
 	return nil
 }
 

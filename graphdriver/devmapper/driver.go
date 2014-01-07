@@ -59,6 +59,7 @@ func (d *Driver) Cleanup() error {
 }
 
 func (d *Driver) Create(id, parent string) error {
+	println("--------------> LIAR!!! you are using devmapper for tests")
 	if err := d.DeviceSet.AddDevice(id, parent); err != nil {
 		return err
 	}

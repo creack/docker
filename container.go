@@ -756,6 +756,10 @@ func (container *Container) Start() (err error) {
 	go container.monitor()
 
 	defer utils.Debugf("Container running: %v", container.State.IsRunning())
+
+	time.Sleep(2 * time.Second)
+	return nil
+
 	// We wait for the container to be fully running.
 	// Timeout after 5 seconds. In case of broken pipe, just retry.
 	// Note: The container can run and finish correctly before

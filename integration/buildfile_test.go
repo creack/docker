@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -481,7 +482,7 @@ func checkCacheBehavior(t *testing.T, template testContextTemplate, expectHit bo
 	return
 }
 
-func checkCacheBehaviorFromEngime(t *testing.T, template testContextTemplate, expectHit bool, eng *engine.Engine) (imageId string) {
+func checkCacheBehaviorFromEngine(t *testing.T, template testContextTemplate, expectHit bool, eng *engine.Engine) (imageId string) {
 	img, err := buildImage(template, t, eng, true)
 	if err != nil {
 		t.Fatal(err)
@@ -491,6 +492,9 @@ func checkCacheBehaviorFromEngime(t *testing.T, template testContextTemplate, ex
 
 	img, err = buildImage(template, t, eng, expectHit)
 	if err != nil {
+		println("--------------------------> Stack")
+		debug.PrintStack()
+		println("--------------------------> End of Stack")
 		t.Fatal(err)
 	}
 
@@ -536,18 +540,22 @@ func TestBuildADDLocalFileWithCache(t *testing.T) {
 	eng := NewTestEngine(t)
 	defer nuke(mkRuntimeFromEngine(eng, t))
 
-	id1 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	id1 := checkCacheBehaviorFromEngine(t, template, true, eng)
+	println("---> id1:", id1)
 	template.files = append(template.files, [2]string{"bar", "hello2"})
-	id2 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	id2 := checkCacheBehaviorFromEngine(t, template, true, eng)
+	println("---> id2:", id2)
 	if id1 == id2 {
 		t.Fatal("The cache should have been invalided but hasn't.")
 	}
-	id3 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	id3 := checkCacheBehaviorFromEngine(t, template, true, eng)
+	println("---> id3:", id3)
 	if id2 != id3 {
 		t.Fatal("The cache should have been used but hasn't.")
 	}
 	template.files[1][1] = "hello3"
-	id4 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	id4 := checkCacheBehaviorFromEngine(t, template, true, eng)
+	println("---> id4:", id4)
 	if id3 == id4 {
 		t.Fatal("The cache should have been invalided but hasn't.")
 	}
@@ -555,12 +563,15 @@ func TestBuildADDLocalFileWithCache(t *testing.T) {
 	add ./bar /src2/
 	run ls /src2/bar
 	`
-	id5 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	id5 := checkCacheBehaviorFromEngine(t, template, true, eng)
+	println("---> id5:", id5)
 	if id4 == id5 {
 		t.Fatal("The cache should have been invalided but hasn't.")
 	}
+
 	template.files[1][1] = "hello4"
-	id6 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	id6 := checkCacheBehaviorFromEngine(t, template, true, eng)
+	println("---> id6:", id6)
 	if id5 == id6 {
 		t.Fatal("The cache should have been invalided but hasn't.")
 	}

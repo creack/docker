@@ -36,9 +36,10 @@ func (d *Driver) Cleanup() error {
 }
 
 func copyDir(src, dst string) error {
-	cmd := exec.Command("cp", "-aT", "--reflink=auto", src, dst)
+	cmd := exec.Command("cp", "-aT", src, dst)
 	if err := cmd.Run(); err != nil {
-		return err
+		fmt.Printf("---------> %s %#v\n", cmd.Path, cmd.Args)
+		return fmt.Errorf("Error VFS copying directory: %s", err)
 	}
 	return nil
 }
@@ -46,19 +47,24 @@ func copyDir(src, dst string) error {
 func (d *Driver) Create(id string, parent string) error {
 	dir := d.dir(id)
 	if err := os.MkdirAll(path.Dir(dir), 0700); err != nil {
+		println("|||||||||||||||||||||> 1")
 		return err
 	}
 	if err := os.Mkdir(dir, 0700); err != nil {
+		println("|||||||||||||||||||||> 2")
 		return err
 	}
 	if parent == "" {
+		println("|||||||||||||||||||||> 3")
 		return nil
 	}
 	parentDir, err := d.Get(parent)
 	if err != nil {
+		println("|||||||||||||||||||||> 4")
 		return fmt.Errorf("%s: %s", parent, err)
 	}
 	if err := copyDir(parentDir, dir); err != nil {
+		println("|||||||||||||||||||||> 5")
 		return err
 	}
 	return nil

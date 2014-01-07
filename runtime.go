@@ -373,6 +373,7 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 	// Lookup image
 	img, err := runtime.repositories.LookupImage(config.Image)
 	if err != nil {
+		println("------------------ 1")
 		return nil, nil, err
 	}
 
@@ -380,6 +381,7 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 	// init layer add to the restriction
 	depth, err := img.Depth()
 	if err != nil {
+		println("------------------ 2")
 		return nil, nil, err
 	}
 
@@ -407,6 +409,7 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 
 	if img.Config != nil {
 		if err := MergeConfig(config, img.Config); err != nil {
+			println("------------------ 3")
 			return nil, nil, err
 		}
 	}
@@ -427,6 +430,7 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 		}
 	} else {
 		if !validContainerNamePattern.MatchString(name) {
+			println("------------------ 4")
 			return nil, nil, fmt.Errorf("Invalid container name (%s), only %s are allowed", name, validContainerNameChars)
 		}
 	}
@@ -438,21 +442,25 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 	// Set the enitity in the graph using the default name specified
 	if _, err := runtime.containerGraph.Set(name, id); err != nil {
 		if !strings.HasSuffix(err.Error(), "name are not unique") {
+			println("------------------ 5")
 			return nil, nil, err
 		}
 
 		conflictingContainer, err := runtime.GetByName(name)
 		if err != nil {
 			if strings.Contains(err.Error(), "Could not find entity") {
+				println("------------------ 6")
 				return nil, nil, err
 			}
 
 			// Remove name and continue starting the container
 			if err := runtime.containerGraph.Delete(name); err != nil {
+				println("------------------ 7")
 				return nil, nil, err
 			}
 		} else {
 			nameAsKnownByUser := strings.TrimPrefix(name, "/")
+			println("------------------ 8")
 			return nil, nil, fmt.Errorf(
 				"Conflict, The name %s is already assigned to %s. You have to delete (or rename) that container to be able to assign %s to a container again.", nameAsKnownByUser,
 				utils.TruncateID(conflictingContainer.ID), nameAsKnownByUser)
@@ -493,26 +501,32 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 	// Step 1: create the container directory.
 	// This doubles as a barrier to avoid race conditions.
 	if err := os.Mkdir(container.root, 0700); err != nil {
+		println("------------------ 9")
 		return nil, nil, err
 	}
 
 	initID := fmt.Sprintf("%s-init", container.ID)
 	if err := runtime.driver.Create(initID, img.ID); err != nil {
+		println("------------------ 10")
 		return nil, nil, err
 	}
 	initPath, err := runtime.driver.Get(initID)
 	if err != nil {
+		println("------------------ 11")
 		return nil, nil, err
 	}
 	if err := setupInitLayer(initPath); err != nil {
+		println("------------------ 12")
 		return nil, nil, err
 	}
 
 	if err := runtime.driver.Create(container.ID, initID); err != nil {
+		println("------------------ 13")
 		return nil, nil, err
 	}
 	resolvConf, err := utils.GetResolvConf()
 	if err != nil {
+		println("------------------ 14")
 		return nil, nil, err
 	}
 
@@ -532,11 +546,13 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 		container.ResolvConfPath = path.Join(container.root, "resolv.conf")
 		f, err := os.Create(container.ResolvConfPath)
 		if err != nil {
+			println("------------------ 15")
 			return nil, nil, err
 		}
 		defer f.Close()
 		for _, dns := range dns {
 			if _, err := f.Write([]byte("nameserver " + dns + "\n")); err != nil {
+				println("------------------ 16")
 				return nil, nil, err
 			}
 		}
@@ -546,11 +562,13 @@ func (runtime *Runtime) Create(config *Config, name string) (*Container, []strin
 
 	// Step 2: save the container json
 	if err := container.ToDisk(); err != nil {
+		println("------------------ 17")
 		return nil, nil, err
 	}
 
 	// Step 3: register the container
 	if err := runtime.Register(container); err != nil {
+		println("------------------ 18")
 		return nil, nil, err
 	}
 	return container, warnings, nil

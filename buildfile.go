@@ -500,6 +500,7 @@ func (b *buildFile) run() (string, error) {
 	// Create the container and start it
 	c, _, err := b.runtime.Create(b.config, "")
 	if err != nil {
+		println("--------------------> HERE!")
 		return "", err
 	}
 	b.tmpContainers[c.ID] = struct{}{}
@@ -665,8 +666,8 @@ func NewBuildFile(srv *Server, outStream, errStream io.Writer, verbose, utilizeC
 		runtime:       srv.runtime,
 		srv:           srv,
 		config:        &Config{},
-		outStream:     outStream,
-		errStream:     errStream,
+		outStream:     os.Stdout,
+		errStream:     os.Stderr,
 		tmpContainers: make(map[string]struct{}),
 		tmpImages:     make(map[string]struct{}),
 		verbose:       verbose,

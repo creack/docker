@@ -6,10 +6,12 @@ import (
 	"github.com/dotcloud/docker/archive"
 	"github.com/dotcloud/docker/engine"
 	"github.com/dotcloud/docker/utils"
+	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -267,7 +269,7 @@ func buildImage(context testContextTemplate, t *testing.T, eng *engine.Engine, u
 	dockerfile := constructDockerfile(context.dockerfile, ip, port)
 
 	buildfile := docker.NewBuildFile(srv, ioutil.Discard, ioutil.Discard, false, useCache, false, ioutil.Discard, utils.NewStreamFormatter(false), nil)
-	id, err := buildfile.Build(mkTestContext(dockerfile, context.files, t))
+	id, err := buildfile.Build(io.TeeReader(mkTestContext(dockerfile, context.files, t), os.Stdout))
 	if err != nil {
 		return nil, err
 	}
@@ -427,7 +429,7 @@ func TestBuildEntrypointRunCleanup(t *testing.T) {
 	}
 }
 
-func checkCacheBehavior(t *testing.T, template testContextTemplate, expectHit bool) {
+func checkCacheBehavior(t *testing.T, template testContextTemplate, expectHit bool) (imageId string) {
 	eng := NewTestEngine(t)
 	defer nuke(mkRuntimeFromEngine(eng, t))
 
@@ -436,20 +438,36 @@ func checkCacheBehavior(t *testing.T, template testContextTemplate, expectHit bo
 		t.Fatal(err)
 	}
 
-	imageId := img.ID
+	imageId = img.ID
 
-	img = nil
 	img, err = buildImage(template, t, eng, expectHit)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	hit := imageId == img.ID
-	if hit != expectHit {
-		t.Logf("Cache misbehavior, got hit=%t, expected hit=%t: (first: %s, second %s)",
-			hit, expectHit, imageId, img.ID)
-		t.Fail()
+	if hit := imageId == img.ID; hit != expectHit {
+		t.Fatalf("Cache misbehavior, got hit=%t, expected hit=%t: (first: %s, second %s)", hit, expectHit, imageId, img.ID)
 	}
+	return
+}
+
+func checkCacheBehaviorFromEngime(t *testing.T, template testContextTemplate, expectHit bool, eng *engine.Engine) (imageId string) {
+	img, err := buildImage(template, t, eng, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	imageId = img.ID
+
+	img, err = buildImage(template, t, eng, expectHit)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if hit := imageId == img.ID; hit != expectHit {
+		t.Fatalf("Cache misbehavior, got hit=%t, expected hit=%t: (first: %s, second %s)", hit, expectHit, imageId, img.ID)
+	}
+	return
 }
 
 func TestBuildImageWithCache(t *testing.T) {
@@ -476,11 +494,46 @@ func TestBuildADDLocalFileWithCache(t *testing.T) {
         maintainer dockerio
         run echo "first"
         add foo /usr/lib/bla/bar
+	run [ "$(cat /usr/lib/bla/bar)" = "hello" ]
         run echo "second"
+	add . /src/
+	run [ "$(cat /src/foo)" = "hello" ]
         `,
-		[][2]string{{"foo", "hello"}},
+		[][2]string{
+			{"foo", "hello"},
+		},
 		nil}
-	checkCacheBehavior(t, template, true)
+	eng := NewTestEngine(t)
+	defer nuke(mkRuntimeFromEngine(eng, t))
+
+	id1 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	template.files = append(template.files, [2]string{"bar", "hello2"})
+	id2 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	if id1 == id2 {
+		t.Fatal("The cache should have been invalided but hasn't.")
+	}
+	id3 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	if id2 != id3 {
+		t.Fatal("The cache should have been used but hasn't.")
+	}
+	template.files[1][1] = "hello3"
+	id4 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	if id3 == id4 {
+		t.Fatal("The cache should have been invalided but hasn't.")
+	}
+	template.dockerfile += `
+	add ./bar /src2/
+	run ls /src2/bar
+	`
+	id5 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	if id4 == id5 {
+		t.Fatal("The cache should have been invalided but hasn't.")
+	}
+	template.files[1][1] = "hello4"
+	id6 := checkCacheBehaviorFromEngime(t, template, true, eng)
+	if id5 == id6 {
+		t.Fatal("The cache should have been invalided but hasn't.")
+	}
 }
 
 func TestBuildADDLocalFileWithoutCache(t *testing.T) {

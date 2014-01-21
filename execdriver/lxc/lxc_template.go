@@ -31,7 +31,7 @@ lxc.console = none
 # no controlling tty at all
 lxc.tty = 1
 
-{{if .Privileged}}
+x{{if .Privileged}}
 lxc.cgroup.devices.allow = a
 {{else}}
 # no implicit access to devices

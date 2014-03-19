@@ -11,7 +11,7 @@ import (
 
 func TestImageTagImageDelete(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	srv := mkServerFromEngine(eng, t)
 
@@ -70,7 +70,7 @@ func TestImageTagImageDelete(t *testing.T) {
 
 func TestCreateRm(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	config, _, _, err := runconfig.Parse([]string{unitTestImageID, "echo test"}, nil)
 	if err != nil {
@@ -117,7 +117,7 @@ func TestCreateRm(t *testing.T) {
 
 func TestCreateNumberHostname(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	config, _, _, err := runconfig.Parse([]string{"-h", "web.0", unitTestImageID, "echo test"}, nil)
 	if err != nil {
@@ -129,7 +129,7 @@ func TestCreateNumberHostname(t *testing.T) {
 
 func TestCreateNumberUsername(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	config, _, _, err := runconfig.Parse([]string{"-u", "1002", unitTestImageID, "echo test"}, nil)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestCreateNumberUsername(t *testing.T) {
 
 func TestCreateRmVolumes(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	config, hostConfig, _, err := runconfig.Parse([]string{"-v", "/srv", unitTestImageID, "echo", "test"}, nil)
 	if err != nil {
@@ -201,7 +201,7 @@ func TestCreateRmVolumes(t *testing.T) {
 
 func TestCreateRmRunning(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	config, hostConfig, _, err := runconfig.Parse([]string{"--name", "foo", unitTestImageID, "sleep 300"}, nil)
 	if err != nil {
@@ -275,7 +275,7 @@ func TestCreateRmRunning(t *testing.T) {
 
 func TestCommit(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	config, _, _, err := runconfig.Parse([]string{unitTestImageID, "/bin/cat"}, nil)
 	if err != nil {
@@ -295,11 +295,11 @@ func TestCommit(t *testing.T) {
 
 func TestMergeConfigOnCommit(t *testing.T) {
 	eng := NewTestEngine(t)
-	runtime := mkRuntimeFromEngine(eng, t)
-	defer runtime.Nuke()
+	daemon := mkDaemonFromEngine(eng, t)
+	defer daemon.Nuke()
 
-	container1, _, _ := mkContainer(runtime, []string{"-e", "FOO=bar", unitTestImageID, "echo test > /tmp/foo"}, t)
-	defer runtime.Destroy(container1)
+	container1, _, _ := mkContainer(daemon, []string{"-e", "FOO=bar", unitTestImageID, "echo test > /tmp/foo"}, t)
+	defer daemon.Destroy(container1)
 
 	config, _, _, err := runconfig.Parse([]string{container1.ID, "cat /tmp/foo"}, nil)
 	if err != nil {
@@ -316,8 +316,8 @@ func TestMergeConfigOnCommit(t *testing.T) {
 		t.Error(err)
 	}
 
-	container2, _, _ := mkContainer(runtime, []string{newId}, t)
-	defer runtime.Destroy(container2)
+	container2, _, _ := mkContainer(daemon, []string{newId}, t)
+	defer daemon.Destroy(container2)
 
 	job = eng.Job("inspect", container1.Name, "container")
 	baseContainer, _ := job.Stdout.AddEnv()
@@ -353,8 +353,8 @@ func TestMergeConfigOnCommit(t *testing.T) {
 func TestRestartKillWait(t *testing.T) {
 	eng := NewTestEngine(t)
 	srv := mkServerFromEngine(eng, t)
-	runtime := mkRuntimeFromEngine(eng, t)
-	defer runtime.Nuke()
+	daemon := mkDaemonFromEngine(eng, t)
+	defer daemon.Nuke()
 
 	config, hostConfig, _, err := runconfig.Parse([]string{"-i", unitTestImageID, "/bin/cat"}, nil)
 	if err != nil {
@@ -419,7 +419,7 @@ func TestRestartKillWait(t *testing.T) {
 func TestCreateStartRestartStopStartKillRm(t *testing.T) {
 	eng := NewTestEngine(t)
 	srv := mkServerFromEngine(eng, t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	config, hostConfig, _, err := runconfig.Parse([]string{"-i", unitTestImageID, "/bin/cat"}, nil)
 	if err != nil {
@@ -498,7 +498,7 @@ func TestCreateStartRestartStopStartKillRm(t *testing.T) {
 
 func TestRunWithTooLowMemoryLimit(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	// Try to create a container with a memory limit of 1 byte less than the minimum allowed limit.
 	job := eng.Job("create")
@@ -516,7 +516,7 @@ func TestRunWithTooLowMemoryLimit(t *testing.T) {
 func TestRmi(t *testing.T) {
 	eng := NewTestEngine(t)
 	srv := mkServerFromEngine(eng, t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	initialImages := getAllImages(eng, t)
 
@@ -601,7 +601,7 @@ func TestRmi(t *testing.T) {
 
 func TestImagesFilter(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer nuke(mkRuntimeFromEngine(eng, t))
+	defer nuke(mkDaemonFromEngine(eng, t))
 
 	if err := eng.Job("tag", unitTestImageName, "utest", "tag1").Run(); err != nil {
 		t.Fatal(err)
@@ -642,7 +642,7 @@ func TestImagesFilter(t *testing.T) {
 
 func TestImageInsert(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 	srv := mkServerFromEngine(eng, t)
 
 	// bad image name fails
@@ -664,7 +664,7 @@ func TestImageInsert(t *testing.T) {
 func TestListContainers(t *testing.T) {
 	eng := NewTestEngine(t)
 	srv := mkServerFromEngine(eng, t)
-	defer mkRuntimeFromEngine(eng, t).Nuke()
+	defer mkDaemonFromEngine(eng, t).Nuke()
 
 	config := runconfig.Config{
 		Image:     unitTestImageID,
@@ -779,7 +779,7 @@ func assertContainerList(srv *server.Server, all bool, limit int, since, before 
 // container
 func TestDeleteTagWithExistingContainers(t *testing.T) {
 	eng := NewTestEngine(t)
-	defer nuke(mkRuntimeFromEngine(eng, t))
+	defer nuke(mkDaemonFromEngine(eng, t))
 
 	srv := mkServerFromEngine(eng, t)
 

@@ -4,7 +4,7 @@ import (
 	"github.com/dotcloud/docker/engine"
 
 	"github.com/dotcloud/docker/api"
-	"github.com/dotcloud/docker/runtime/networkdriver/lxc"
+	"github.com/dotcloud/docker/daemon/networkdriver/lxc"
 	"github.com/dotcloud/docker/server"
 )
 

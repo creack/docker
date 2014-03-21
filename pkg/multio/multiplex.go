@@ -4,36 +4,114 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"log"
 )
 
 const (
-	HeaderLen = 8 // Size of the header
-	IDIndex   = 0 // Index where is the Fd
-	SizeIndex = 4 // Index where is the Frame size
+	PageSize = 32 * 1024
+
+	Version = 1
+)
+
+// Message padding
+const (
+	HeaderLen = 12 // Size of the header
+
+	VersionIndex = iota << 2
+	IDIndex      // Index where is the Fd
+	SizeIndex    // Index where is the Frame size
+	TypeIndex    // Index where is the type of the frame
+)
+
+// Message types
+const (
+	WriteRequest uint8 = iota
+	ReadRequest
+	AckWrite
+	AckRead
+	AckNotReady
+)
+
+// New message types
+const (
+	Frame = iota
+	Ack
+	Close
 )
 
 var (
-	ErrWrongType        = errors.New("Multiplexer need to have a Writer and a Reader as argument")
-	ErrInvalidStdHeader = errors.New("Unrecognized input header")
+	ErrWrongReqSize      = errors.New("Error reading the request: wrong size")
+	ErrUnkownRequestType = errors.New("Unkown request type or invalid request")
+	ErrWrongType         = errors.New("Multiplexer need to have a Writer and a Reader as argument")
+
+	ErrInvalidStdHeader = errors.New("Unrecognized input header") // FIXE: remove?
 )
 
-type Multiplexer struct {
-	r io.Reader
-	w io.Writer
-	c io.Closer // TODO: implement Close()
+/*
+	id := binary.BigEndian.Uint32(buf[IDIndex : IDIndex+4])
+	binary.BigEndian.PutUint32(ack[IDIndex:IDIndex+4], uint32(id))
+*/
+
+type reqMap map[uint32]chan []byte
+
+type msg struct {
+	data []byte
+	n    int
+	err  error
 }
 
-func (m *Multiplexer) Start() error {
-	var (
-		buf = make([]byte, 32*1024)
-	)
+type msgMap map[uint32]chan msg
+
+type Multiplexer struct {
+	r         io.Reader
+	w         io.Writer
+	c         io.Closer // TODO: implement Close()
+	msgMap    msgMap
+	writeChan chan []byte
+	readChans map[int]chan *Message
+	ackChans  map[int]chan *Message
+
+	writeReq reqMap
+	readReq  reqMap
+}
+
+// decode cannot fail. In case of error, it populate the field err from Message.
+func (m *Multiplexer) decodeMsg(src []byte, err error) *Message {
+	msg := &Message{}
+	msg.decode(src, err)
+	return msg
+}
+
+func (m *Multiplexer) encodeMsg(src []byte) []byte {
+	msg := &Message{
+		data: src,
+	}
+	msg.encode()
+	return msg.encode()
+}
+
+func (m *Multiplexer) StartRead() error {
+	buf := make([]byte, PageSize+HeaderLen)
 	for {
-		// Read ACK with ID
 		n, err := m.r.Read(buf)
+		msg := m.decodeMsg(buf[:n], err)
+		switch msg.kind {
+		case Frame:
+			go func() {
+				m.readChans[int(msg.id)] <- msg
+			}()
+		case Ack:
+			m.ackChans[int(msg.id)] <- msg
+		case Close:
+			panic("unimplemented")
+		}
+	}
+	return nil
+}
 
-		// Read page
-
-		// Send it to the chan
+func (m *Multiplexer) StartWrite() error {
+	for buf := range m.writeChan {
+		m.w.Write(m.encodeMsg(buf))
 	}
 	return nil
 }
@@ -52,190 +130,56 @@ func NewMultiplexer(rwc interface{}) (*Multiplexer, error) {
 	if m.r == nil || m.w == nil {
 		return nil, ErrWrongType
 	}
-	go m.Start()
+	m.writeReq = reqMap{}
+	m.readReq = reqMap{}
+	go m.StartRead()
+	go m.StartWrite()
 	return m, nil
 }
 
-func (m *Multiplexer) NewWriter(id uint8) io.Writer {
+func (m *Multiplexer) NewWriter(id int) io.Writer {
+	if _, exists := m.ackChans[id]; exists {
+		return nil
+	}
+
+	m.ackChans[id] = make(chan *Message)
+
 	return &Writer{
-		Writer:  m.w,
-		prefix:  StdType{0: id},
-		sizeBuf: make([]byte, 4), // We encode the size in 32bits.
+		writeChan: m.writeChan,
+		ackChan:   m.ackChans[id],
 	}
 }
 
 func (m *Multiplexer) NewReader(id int) io.Reader {
-	return &Reader{
-		Reader:  m.r,
-		w:       m.w,
-		id:      id,
-		sizeBuf: make([]byte, 4),       // We encode the size in 32 bits
-		dataBuf: make([]byte, 32*1024), // Allocate a page so we don't need to worry about it.
-	}
+	return &Reader{}
 }
 
-type StdType [HeaderLen]byte
 type Header [HeaderLen]byte
 
-var (
-	Stdin  StdType = StdType{0: 0}
-	Stdout StdType = StdType{0: 1}
-	Stderr StdType = StdType{0: 2}
-)
-
-// Writer is multiplexed Writer.
-// Everything written to it will be encapsulated using a custom format,
-// and written to the underlying `w` stream.
-// This allows multiple write streams (e.g. stdout and stderr) to be muxed into a single connection.
-// `t` indicates the id of the stream to encapsulate.
-// It can be utils.Stdin, utils.Stdout, utils.Stderr.
 type Writer struct {
-	io.Writer
-	prefix  StdType
-	sizeBuf []byte
+	writeChan chan []byte
+	ackChan   chan *Message
 }
 
 func (w *Writer) Write(buf []byte) (n int, err error) {
-	if w == nil || w.Writer == nil {
-		return 0, errors.New("Writer not instanciated")
-	}
-	binary.BigEndian.PutUint32(w.prefix[4:], uint32(len(buf)))
-	buf = append(w.prefix[:], buf...)
-
-	n, err = w.Writer.Write(buf)
-	return n - HeaderLen, err
+	w.writeChan <- buf
+	msg := <-w.ackChan
+	return msg.n, msg.err
 }
 
 type Reader struct {
-	io.Reader
-	id      int
-	w       io.Writer
-	prefex  StdType
-	sizeBuf []byte
-	dataBuf []byte
+	readChan chan *Message
+	ackChan  chan *Message
 }
 
 // Blocks until the full page has been read
 func (r *Reader) Read(buf []byte) (int, error) {
-	if r == nil || r.w == nil {
-		return 0, errors.New("not instanciated")
-	}
+	// Wait for a message
+	msg := <-r.readChan
+	copy(buf, msg.data)
 
-	// Ask the other side to write
-	header := make([]byte, HeaderLen)
-	// put the id and the size in the header
-	binary.BigEndian.PutUint32(header[IDIndex:IDIndex+4], uint32(r.id))
-	binary.BigEndian.PutUint32(header[SizeIndex:SizeIndex+4], uint32(len(buf)))
-	// Send the header
-	n, err := r.w.Write(header)
-	if n != HeaderLen {
-		return n, io.ErrShortWrite
-	}
+	// Send ACK
+	r.ackChan <- msg
 
-	// Block until acknowledgement
-
-	// Actually read
-	var (
-		nr int
-	)
-	for nr < HeaderLen {
-		nr2, er := r.Reader.Read(r.dataBuf[nr:])
-		if er != nil {
-			return nr + nr2, er
-		}
-		nr += nr2
-	}
-	return 0, nil
-}
-
-// StdCopy is a modified version of io.Copy.
-//
-// StdCopy will demultiplex `src`, assuming that it contains two streams,
-// previously multiplexed together using a StdWriter instance.
-// As it reads from `src`, StdCopy will write to `dstout` and `dsterr`.
-//
-// StdCopy will read until it hits EOF on `src`. It will then return a nil error.
-// In other words: if `err` is non nil, it indicates a real underlying error.
-//
-// `written` will hold the total number of bytes written to `dstout` and `dsterr`.
-func StdCopy(dstout, dsterr io.Writer, src io.Reader) (written int64, err error) {
-	var (
-		buf       = make([]byte, 32*1024+HeaderLen+1)
-		bufLen    = len(buf)
-		nr, nw    int
-		er, ew    error
-		out       io.Writer
-		frameSize int
-	)
-
-	for {
-		// Make sure we have at least a full header
-		for nr < HeaderLen {
-			var nr2 int
-			nr2, er = src.Read(buf[nr:])
-			if er == io.EOF {
-				return written, nil
-			}
-			if er != nil {
-				return 0, er
-			}
-			nr += nr2
-		}
-
-		// Check the first byte to know where to write
-		switch buf[FdIndex] {
-		case 0:
-			fallthrough
-		case 1:
-			// Write on stdout
-			out = dstout
-		case 2:
-			// Write on stderr
-			out = dsterr
-		default:
-			// FIXME: use os.NewFile() on the custom fd
-			return 0, ErrInvalidStdHeader
-		}
-
-		// Retrieve the size of the frame
-		frameSize = int(binary.BigEndian.Uint32(buf[SizeIndex : SizeIndex+4]))
-
-		// Check if the buffer is big enough to read the frame.
-		// Extend it if necessary.
-		if frameSize+HeaderLen > bufLen {
-			buf = append(buf, make([]byte, frameSize-len(buf)+1)...)
-			bufLen = len(buf)
-		}
-
-		// While the amount of bytes read is less than the size of the frame + header, we keep reading
-		for nr < frameSize+HeaderLen {
-			var nr2 int
-			nr2, er = src.Read(buf[nr:])
-			if er == io.EOF {
-				return written, nil
-			}
-			if er != nil {
-				return 0, er
-			}
-			nr += nr2
-		}
-
-		// Write the retrieved frame (without header)
-		nw, ew = out.Write(buf[HeaderLen : frameSize+HeaderLen])
-		if nw > 0 {
-			written += int64(nw)
-		}
-		if ew != nil {
-			return 0, ew
-		}
-		// If the frame has not been fully written: error
-		if nw != frameSize {
-			return 0, io.ErrShortWrite
-		}
-
-		// Move the rest of the buffer to the beginning
-		copy(buf, buf[frameSize+HeaderLen:])
-		// Move the index
-		nr -= frameSize + HeaderLen
-	}
+	return msg.n, msg.err
 }

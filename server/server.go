@@ -65,6 +65,7 @@ func InitServer(job *engine.Job) engine.Status {
 	for name, handler := range map[string]engine.Handler{
 		"export":           srv.ContainerExport,
 		"create":           srv.ContainerCreate,
+		"exec":             srv.ContainerExec,
 		"stop":             srv.ContainerStop,
 		"restart":          srv.ContainerRestart,
 		"start":            srv.ContainerStart,
@@ -1669,6 +1670,20 @@ func (srv *Server) ImageImport(job *engine.Job) engine.Status {
 	return engine.StatusOK
 }
 
+func (srv *Server) ContainerExec(job *engine.Job) engine.Status {
+	if len(job.Args) > 0 {
+		return job.Errorf("Usage: %s", job.Name)
+	}
+	config := runconfig.ContainerConfigFromJob(job)
+
+	container, _, err := srv.runtime.Exec(config)
+	if err != nil {
+		return job.Error(err)
+	}
+	job.Logf("--------> %#v\n", container)
+	return engine.StatusOK
+}
+
 func (srv *Server) ContainerCreate(job *engine.Job) engine.Status {
 	var name string
 	if len(job.Args) == 1 {
@@ -2172,6 +2187,7 @@ func (srv *Server) ContainerAttach(job *engine.Job) engine.Status {
 
 	var (
 		name   = job.Args[0]
+		jobId  = job.GetenvInt("jobId")
 		logs   = job.GetenvBool("logs")
 		stream = job.GetenvBool("stream")
 		stdin  = job.GetenvBool("stdin")
@@ -2258,7 +2274,7 @@ func (srv *Server) ContainerAttach(job *engine.Job) engine.Status {
 			cStderr = job.Stderr
 		}
 
-		<-container.Attach(cStdin, cStdinCloser, cStdout, cStderr)
+		<-container.Attach(jobId, cStdin, cStdinCloser, cStdout, cStderr)
 
 		// If we are in stdinonce mode, wait for the process to end
 		// otherwise, simply return

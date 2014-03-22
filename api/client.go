@@ -1754,6 +1754,26 @@ func (cli *DockerCli) CmdTag(args ...string) error {
 	return nil
 }
 
+func (cli *DockerCli) CmdExec(args ...string) error {
+	config, _, cmd, err := runconfig.ParseSubcommand(cli.Subcmd("exec", "[OPTIONS] IMAGE [COMMAND] [ARG...]", "Run a command in an existing container"), args, nil)
+	if err != nil {
+		return err
+	}
+	if config.Image == "" {
+		cmd.Usage()
+		return nil
+	}
+
+	v := url.Values{}
+	v.Set("containerId", config.Image)
+	r, _, err := cli.call("POST", "/containers/exec?"+v.Encode(), config, false)
+	if err != nil {
+		return err
+	}
+	io.Copy(os.Stdout, r)
+	return nil
+}
+
 func (cli *DockerCli) CmdRun(args ...string) error {
 	// FIXME: just use runconfig.Parse already
 	config, hostConfig, cmd, err := runconfig.ParseSubcommand(cli.Subcmd("run", "[OPTIONS] IMAGE [COMMAND] [ARG...]", "Run a command in a new container"), args, nil)
@@ -1919,6 +1939,8 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 				stderr = cli.err
 			}
 		}
+
+		v.Set("jobId", "0")
 
 		errCh = utils.Go(func() error {
 			return cli.hijack("POST", "/containers/"+runResult.Get("Id")+"/attach?"+v.Encode(), config.Tty, in, out, stderr, hijacked)

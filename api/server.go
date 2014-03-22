@@ -550,6 +550,28 @@ func postImagesLoad(eng *engine.Engine, version version.Version, w http.Response
 	return job.Run()
 }
 
+func postContainersExec(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	if err := parseForm(r); err != nil {
+		return nil
+	}
+	var (
+		out   engine.Env
+		job   = eng.Job("exec")
+		outId string
+	)
+	if err := job.DecodeEnv(r.Body); err != nil {
+		return err
+	}
+	// Read container ID from the first line of stdout
+	job.Stdout.AddString(&outId)
+	if err := job.Run(); err != nil {
+		return err
+	}
+
+	out.Set("Id", outId)
+	return writeJSON(w, http.StatusCreated, out)
+}
+
 func postContainersCreate(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return nil
@@ -757,6 +779,7 @@ func postContainersAttach(eng *engine.Engine, version version.Version, w http.Re
 	job.Setenv("stdin", r.Form.Get("stdin"))
 	job.Setenv("stdout", r.Form.Get("stdout"))
 	job.Setenv("stderr", r.Form.Get("stderr"))
+	job.Setenv("jobId", r.Form.Get("jobId"))
 	job.Stdin.Add(inStream)
 	job.Stdout.Add(outStream)
 	job.Stderr.Set(errStream)
@@ -1021,6 +1044,7 @@ func createRouter(eng *engine.Engine, logging, enableCors bool, dockerVersion st
 			"/images/{name:.*}/push":        postImagesPush,
 			"/images/{name:.*}/tag":         postImagesTag,
 			"/containers/create":            postContainersCreate,
+			"/containers/exec":              postContainersExec,
 			"/containers/{name:.*}/kill":    postContainersKill,
 			"/containers/{name:.*}/restart": postContainersRestart,
 			"/containers/{name:.*}/start":   postContainersStart,

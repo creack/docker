@@ -538,6 +538,34 @@ func (runtime *Runtime) Create(config *runconfig.Config, name string) (*Containe
 	return container, warnings, nil
 }
 
+func (runtime *Runtime) Exec(config *runconfig.Config) (*Container, []string, error) {
+	// Lookup container
+	container := runtime.Get(config.Image)
+
+	if !container.State.Running {
+		return nil, nil, fmt.Errorf("The container is not running")
+	}
+	runtime.execDriver.Exec()
+	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
+		return nil, nil, fmt.Errorf("No command specified")
+	}
+
+	// var args []string
+	// var entrypoint string
+
+	// if len(config.Entrypoint) != 0 {
+	// 	entrypoint = config.Entrypoint[0]
+	// 	args = append(config.Entrypoint[1:], config.Cmd...)
+	// } else {
+	// 	entrypoint = config.Cmd[0]
+	// 	args = config.Cmd[1:]
+	// }
+
+	container.root = runtime.containerRoot(container.ID)
+
+	return container, nil, nil
+}
+
 // Commit creates a new filesystem image from the current state of a container.
 // The image can optionally be tagged into a repository
 func (runtime *Runtime) Commit(container *Container, repository, tag, comment, author string, config *runconfig.Config) (*image.Image, error) {
@@ -840,11 +868,11 @@ func (runtime *Runtime) Diff(container *Container) (archive.Archive, error) {
 }
 
 func (runtime *Runtime) Run(c *Container, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (int, error) {
-	return runtime.execDriver.Run(c.command, pipes, startCallback)
+	return runtime.execDriver.Run(c.command[0], pipes, startCallback)
 }
 
 func (runtime *Runtime) Kill(c *Container, sig int) error {
-	return runtime.execDriver.Kill(c.command, sig)
+	return runtime.execDriver.Kill(c.command[0], sig)
 }
 
 // Nuke kills all containers then removes all content

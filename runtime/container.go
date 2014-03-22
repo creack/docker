@@ -58,7 +58,7 @@ type Container struct {
 	Driver         string
 	ExecDriver     string
 
-	command   *execdriver.Command
+	command   []*execdriver.Command
 	stdout    *utils.WriteBroadcaster
 	stderr    *utils.WriteBroadcaster
 	stdin     io.ReadCloser
@@ -214,7 +214,18 @@ func (container *Container) generateEnvConfig(env []string) error {
 	return nil
 }
 
-func (container *Container) Attach(stdin io.ReadCloser, stdinCloser io.Closer, stdout io.Writer, stderr io.Writer) chan error {
+func (container *Container) Attach(jobId int, stdin io.ReadCloser, stdinCloser io.Closer, stdout io.Writer, stderr io.Writer) chan error {
+
+	if jobId != 0 {
+		cErr := utils.Go(func() error {
+			if len(container.command) < jobId {
+				return fmt.Errorf("Unkown job")
+			}
+			return nil
+		})
+		return cErr
+	}
+
 	var cStdout, cStderr io.ReadCloser
 
 	var nJobs int
@@ -389,21 +400,23 @@ func populateCommand(c *Container) {
 		MemorySwap: c.Config.MemorySwap,
 		CpuShares:  c.Config.CpuShares,
 	}
-	c.command = &execdriver.Command{
-		ID:         c.ID,
-		Privileged: c.hostConfig.Privileged,
-		Rootfs:     c.RootfsPath(),
-		InitPath:   "/.dockerinit",
-		Entrypoint: c.Path,
-		Arguments:  c.Args,
-		WorkingDir: c.Config.WorkingDir,
-		Network:    en,
-		Tty:        c.Config.Tty,
-		User:       c.Config.User,
-		Config:     driverConfig,
-		Resources:  resources,
+	c.command = []*execdriver.Command{
+		0: &execdriver.Command{
+			ID:         c.ID,
+			Privileged: c.hostConfig.Privileged,
+			Rootfs:     c.RootfsPath(),
+			InitPath:   "/.dockerinit",
+			Entrypoint: c.Path,
+			Arguments:  c.Args,
+			WorkingDir: c.Config.WorkingDir,
+			Network:    en,
+			Tty:        c.Config.Tty,
+			User:       c.Config.User,
+			Config:     driverConfig,
+			Resources:  resources,
+		},
 	}
-	c.command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	c.command[0].SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
 
 func (container *Container) ArgsAsString() string {
@@ -546,7 +559,7 @@ func (container *Container) Start() (err error) {
 	}
 
 	populateCommand(container)
-	container.command.Env = env
+	container.command[0].Env = env
 
 	if err := setupMountsForContainer(container, envPath); err != nil {
 		return err
@@ -853,8 +866,8 @@ func (container *Container) cleanup() {
 	if err := container.stderr.CloseWriters(); err != nil {
 		utils.Errorf("%s: Error close stderr: %s", container.ID, err)
 	}
-	if container.command != nil && container.command.Terminal != nil {
-		if err := container.command.Terminal.Close(); err != nil {
+	if container.command != nil && container.command[0].Terminal != nil {
+		if err := container.command[0].Terminal.Close(); err != nil {
 			utils.Errorf("%s: Error closing terminal: %s", container.ID, err)
 		}
 	}
@@ -934,7 +947,7 @@ func (container *Container) Wait() int {
 }
 
 func (container *Container) Resize(h, w int) error {
-	return container.command.Terminal.Resize(h, w)
+	return container.command[0].Terminal.Resize(h, w)
 }
 
 func (container *Container) ExportRw() (archive.Archive, error) {
@@ -1132,7 +1145,7 @@ func (container *Container) Exposes(p nat.Port) bool {
 }
 
 func (container *Container) GetPtyMaster() (*os.File, error) {
-	ttyConsole, ok := container.command.Terminal.(execdriver.TtyTerminal)
+	ttyConsole, ok := container.command[0].Terminal.(execdriver.TtyTerminal)
 	if !ok {
 		return nil, ErrNoTTY
 	}

@@ -43,7 +43,6 @@ func CreateMasterAndConsole() (*os.File, string, error) {
 
 // OpenPtmx opens /dev/ptmx, i.e. the PTY master.
 func OpenPtmx() (*os.File, error) {
-	// O_NOCTTY and O_CLOEXEC are not present in os package so we use the syscall's one for all.
 	return os.OpenFile("/dev/ptmx", syscall.O_RDONLY|syscall.O_NOCTTY|syscall.O_CLOEXEC, 0)
 }
 
@@ -52,7 +51,7 @@ func OpenPtmx() (*os.File, error) {
 func OpenTerminal(name string, flag int) (*os.File, error) {
 	r, e := syscall.Open(name, flag, 0)
 	if e != nil {
-		return nil, &os.PathError{"open", name, e}
+		return nil, &os.PathError{Op: "open", Path: name, Err: e}
 	}
 	return os.NewFile(uintptr(r), name), nil
 }

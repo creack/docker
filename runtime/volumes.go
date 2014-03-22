@@ -53,7 +53,7 @@ func setupMountsForContainer(container *Container, envPath string) error {
 		mounts = append(mounts, execdriver.Mount{v, r, container.VolumesRW[r], false})
 	}
 
-	container.command.Mounts = mounts
+	container.command[0].Mounts = mounts
 
 	return nil
 }

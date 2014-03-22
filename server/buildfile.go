@@ -624,7 +624,7 @@ func (b *buildFile) run(c *runtime.Container) error {
 
 	if b.verbose {
 		errCh = utils.Go(func() error {
-			return <-c.Attach(nil, nil, b.outStream, b.errStream)
+			return <-c.Attach(0, nil, nil, b.outStream, b.errStream)
 		})
 	}
 

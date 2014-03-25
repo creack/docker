@@ -111,6 +111,45 @@ func (d *driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 	return ns.Exec(container, term, args)
 }
 
+func (d *driver) Exec(c *execdriver.Command, nspid int, pipes *execdriver.Pipes) (int, error) {
+	if err := d.validateCommand(c); err != nil {
+		return -1, err
+	}
+	var (
+		term      nsinit.Terminal
+		container = createContainer(c)
+		args      = append([]string{c.Entrypoint}, c.Arguments...)
+	)
+	if c.Tty {
+		term = &dockerTtyTerm{
+			pipes: pipes,
+		}
+	} else {
+		term = &dockerStdTerm{
+			pipes: pipes,
+		}
+	}
+	c.Terminal = term
+
+	ns := nsinit.NewNsInit(nil, nil, createLogger(os.Getenv("DEBUG")))
+
+	fmt.Printf("process: %#v\n", args)
+
+	cmd := exec.Command("nsinit", args...)
+	cmd.Dir = "/var/lib/docker-btrfs/execdriver/native/" + c.ID
+	cmd.Stdin = nil
+	cmd.Stdout = pipes.Stdout
+	cmd.Stderr = pipes.Stderr
+
+	err := cmd.Run()
+	status := cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
+	fmt.Printf("RETURN--- err: %v, status: %d\n", err, status)
+	fmt.Printf("Args: %#v\n", args)
+	return status, err
+
+	return ns.ExecIn(container, nspid, args)
+}
+
 func (d *driver) Kill(p *execdriver.Command, sig int) error {
 	err := syscall.Kill(p.Process.Pid, syscall.Signal(sig))
 	d.removeContainerRoot(p.ID)

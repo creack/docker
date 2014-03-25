@@ -434,23 +434,23 @@ func (runtime *Runtime) Create(config *runconfig.Config, name string) (*Containe
 		config.Hostname = id[:12]
 	}
 
-	var args []string
-	var entrypoint string
+	// var args []string
+	// var entrypoint string
 
-	if len(config.Entrypoint) != 0 {
-		entrypoint = config.Entrypoint[0]
-		args = append(config.Entrypoint[1:], config.Cmd...)
-	} else {
-		entrypoint = config.Cmd[0]
-		args = config.Cmd[1:]
-	}
+	// if len(config.Entrypoint) != 0 {
+	// 	entrypoint = config.Entrypoint[0]
+	// 	args = append(config.Entrypoint[1:], config.Cmd...)
+	// } else {
+	// 	entrypoint = config.Cmd[0]
+	// 	args = config.Cmd[1:]
+	// }
 
 	container := &Container{
 		// FIXME: we should generate the ID here instead of receiving it as an argument
-		ID:              id,
-		Created:         time.Now().UTC(),
-		Path:            entrypoint,
-		Args:            args, //FIXME: de-duplicate from config
+		ID:      id,
+		Created: time.Now().UTC(),
+		// Path:            entrypoint,
+		// Args:            args, //FIXME: de-duplicate from config
 		Config:          config,
 		hostConfig:      &runconfig.HostConfig{},
 		Image:           img.ID, // Always use the resolved image id
@@ -541,11 +541,45 @@ func (runtime *Runtime) Create(config *runconfig.Config, name string) (*Containe
 func (runtime *Runtime) Exec(config *runconfig.Config) (*Container, []string, error) {
 	// Lookup container
 	container := runtime.Get(config.Image)
-
 	if !container.State.Running {
 		return nil, nil, fmt.Errorf("The container is not running")
 	}
-	runtime.execDriver.Exec()
+
+	if container.command == nil {
+		return nil, nil, fmt.Errorf("The container's command is not initialized")
+	}
+	println()
+	println()
+	println()
+	fmt.Printf("cmd before: %v\n", config.Cmd)
+	container.Config = config
+	populateCommand(container)
+
+	// This is valid only after populateCommand
+	jobId := len(container.command) - 1
+
+	fmt.Printf("cmd after: %v\n", container.Config.Cmd)
+
+	fmt.Printf("cmd.Cmd after: %s, %v\n", container.command[jobId].Cmd.Path, container.command[jobId].Cmd.Args)
+
+	container.command[jobId].Entrypoint = "exec"
+	container.command[jobId].Arguments = config.Cmd
+	fmt.Printf("Entrypoint: %s, Args: %v\n", container.command[jobId].Entrypoint, container.command[jobId].Arguments)
+	println()
+	println()
+	println()
+
+	if jobId < 1 {
+		return nil, nil, fmt.Errorf("Unexpected error during exec: Exec can't be the first command")
+	}
+
+	println("job id!:", jobId)
+	//	jobId = 1
+
+	pipes := execdriver.NewPipes(container.stdin, container.stdout, container.stderr, container.Config.OpenStdin)
+
+	runtime.execDriver.Exec(container.command[jobId], container.command[0].Process.Pid, pipes)
+
 	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
 		return nil, nil, fmt.Errorf("No command specified")
 	}

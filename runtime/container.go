@@ -42,14 +42,14 @@ type Container struct {
 
 	Created time.Time
 
-	Path string
-	Args []string
-
 	Config *runconfig.Config
 	State  State
 	Image  string
 
 	NetworkSettings *NetworkSettings
+
+	Path string
+	Args []string
 
 	ResolvConfPath string
 	HostnamePath   string
@@ -86,6 +86,18 @@ type NetworkSettings struct {
 	Bridge      string
 	PortMapping map[string]PortMapping // Deprecated
 	Ports       nat.PortMap
+}
+
+func (container *Container) ArgsAsString() string {
+	var args []string
+	for _, arg := range container.Args {
+		if strings.Contains(arg, " ") {
+			args = append(args, fmt.Sprintf("'%s'", arg))
+		} else {
+			args = append(args, arg)
+		}
+	}
+	return strings.Join(args, " ")
 }
 
 func (settings *NetworkSettings) PortMappingAPI() *engine.Table {
@@ -400,36 +412,42 @@ func populateCommand(c *Container) {
 		MemorySwap: c.Config.MemorySwap,
 		CpuShares:  c.Config.CpuShares,
 	}
-	c.command = []*execdriver.Command{
-		0: &execdriver.Command{
-			ID:         c.ID,
-			Privileged: c.hostConfig.Privileged,
-			Rootfs:     c.RootfsPath(),
-			InitPath:   "/.dockerinit",
-			Entrypoint: c.Path,
-			Arguments:  c.Args,
-			WorkingDir: c.Config.WorkingDir,
-			Network:    en,
-			Tty:        c.Config.Tty,
-			User:       c.Config.User,
-			Config:     driverConfig,
-			Resources:  resources,
-		},
+
+	cmd := &execdriver.Command{
+		ID:         c.ID,
+		Privileged: c.hostConfig.Privileged,
+		Rootfs:     c.RootfsPath(),
+		InitPath:   "/.dockerinit",
+		Entrypoint: c.Config.Cmd[0],
+		Arguments:  c.Config.Cmd[1:],
+		WorkingDir: c.Config.WorkingDir,
+		Network:    en,
+		Tty:        c.Config.Tty,
+		User:       c.Config.User,
+		Config:     driverConfig,
+		Resources:  resources,
 	}
-	c.command[0].SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if c.command == nil {
+		c.command = []*execdriver.Command{
+			0: cmd,
+		}
+	} else {
+		c.command = append(c.command, cmd)
+	}
 }
 
-func (container *Container) ArgsAsString() string {
-	var args []string
-	for _, arg := range container.Args {
-		if strings.Contains(arg, " ") {
-			args = append(args, fmt.Sprintf("'%s'", arg))
-		} else {
-			args = append(args, arg)
-		}
-	}
-	return strings.Join(args, " ")
-}
+// func (container *Container) ArgsAsString() string {
+// 	var args []string
+// 	for _, arg := range container.Args {
+// 		if strings.Contains(arg, " ") {
+// 			args = append(args, fmt.Sprintf("'%s'", arg))
+// 		} else {
+// 			args = append(args, arg)
+// 		}
+// 	}
+// 	return strings.Join(args, " ")
+// }
 
 func (container *Container) Start() (err error) {
 	container.Lock()

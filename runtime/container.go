@@ -227,24 +227,13 @@ func (container *Container) generateEnvConfig(env []string) error {
 }
 
 func (container *Container) Attach(jobId int, stdin io.ReadCloser, stdinCloser io.Closer, stdout io.Writer, stderr io.Writer) chan error {
-
-	if jobId != 0 {
-		cErr := utils.Go(func() error {
-			if len(container.command) < jobId {
-				return fmt.Errorf("Unkown job")
-			}
-			return nil
-		})
-		return cErr
-	}
-
 	var cStdout, cStderr io.ReadCloser
 
 	var nJobs int
 	errors := make(chan error, 3)
 	if stdin != nil && container.Config.OpenStdin {
 		nJobs += 1
-		if cStdin, err := container.StdinPipe(); err != nil {
+		if cStdin, err := container.StdinPipe(jobId); err != nil {
 			errors <- err
 		} else {
 			go func() {
@@ -280,7 +269,7 @@ func (container *Container) Attach(jobId int, stdin io.ReadCloser, stdinCloser i
 	}
 	if stdout != nil {
 		nJobs += 1
-		if p, err := container.StdoutPipe(); err != nil {
+		if p, err := container.StdoutPipe(jobId); err != nil {
 			errors <- err
 		} else {
 			cStdout = p
@@ -309,7 +298,7 @@ func (container *Container) Attach(jobId int, stdin io.ReadCloser, stdinCloser i
 			if stdinCloser != nil {
 				defer stdinCloser.Close()
 			}
-			if cStdout, err := container.StdoutPipe(); err != nil {
+			if cStdout, err := container.StdoutPipe(jobId); err != nil {
 				utils.Errorf("attach: stdout pipe: %s", err)
 			} else {
 				io.Copy(&utils.NopWriter{}, cStdout)
@@ -318,7 +307,7 @@ func (container *Container) Attach(jobId int, stdin io.ReadCloser, stdinCloser i
 	}
 	if stderr != nil {
 		nJobs += 1
-		if p, err := container.StderrPipe(); err != nil {
+		if p, err := container.StderrPipe(jobId); err != nil {
 			errors <- err
 		} else {
 			cStderr = p
@@ -348,7 +337,7 @@ func (container *Container) Attach(jobId int, stdin io.ReadCloser, stdinCloser i
 				defer stdinCloser.Close()
 			}
 
-			if cStderr, err := container.StderrPipe(); err != nil {
+			if cStderr, err := container.StderrPipe(jobId); err != nil {
 				utils.Errorf("attach: stdout pipe: %s", err)
 			} else {
 				io.Copy(&utils.NopWriter{}, cStderr)
@@ -434,20 +423,16 @@ func populateCommand(c *Container) {
 		}
 	} else {
 		c.command = append(c.command, cmd)
+
+		// FIXME: This is the Register() role. Keep it here for now, but to be moved.
+		r, w := io.Pipe()
+		c.stdin = append(c.stdin, r)
+		c.stdinPipe = append(c.stdinPipe, w)
+
+		c.stdout = append(c.stdout, utils.NewWriteBroadcaster())
+		c.stderr = append(c.stderr, utils.NewWriteBroadcaster())
 	}
 }
-
-// func (container *Container) ArgsAsString() string {
-// 	var args []string
-// 	for _, arg := range container.Args {
-// 		if strings.Contains(arg, " ") {
-// 			args = append(args, fmt.Sprintf("'%s'", arg))
-// 		} else {
-// 			args = append(args, arg)
-// 		}
-// 	}
-// 	return strings.Join(args, " ")
-// }
 
 func (container *Container) Start() (err error) {
 	container.Lock()
@@ -631,7 +616,9 @@ func (container *Container) Run() error {
 }
 
 func (container *Container) Output() (output []byte, err error) {
-	pipe, err := container.StdoutPipe()
+	// Output() is used only for the main process (so far)
+	// Use the main pipe.
+	pipe, err := container.StdoutPipe(0)
 	if err != nil {
 		return nil, err
 	}
@@ -652,19 +639,28 @@ func (container *Container) Output() (output []byte, err error) {
 // copied and delivered to all StdoutPipe and StderrPipe consumers, using
 // a kind of "broadcaster".
 
-func (container *Container) StdinPipe() (io.WriteCloser, error) {
-	return container.stdinPipe[0], nil
+func (container *Container) StdinPipe(jobId int) (io.WriteCloser, error) {
+	if jobId >= len(container.stdinPipe) {
+		return nil, fmt.Errorf("jobId %d unkown\n", jobId)
+	}
+	return container.stdinPipe[jobId], nil
 }
 
-func (container *Container) StdoutPipe() (io.ReadCloser, error) {
+func (container *Container) StdoutPipe(jobId int) (io.ReadCloser, error) {
+	if jobId >= len(container.stdinPipe) {
+		return nil, fmt.Errorf("jobId %d unkown\n", jobId)
+	}
 	reader, writer := io.Pipe()
-	container.stdout[0].AddWriter(writer, "")
+	container.stdout[jobId].AddWriter(writer, "")
 	return utils.NewBufReader(reader), nil
 }
 
-func (container *Container) StderrPipe() (io.ReadCloser, error) {
+func (container *Container) StderrPipe(jobId int) (io.ReadCloser, error) {
+	if jobId >= len(container.stdinPipe) {
+		return nil, fmt.Errorf("jobId %d unkown\n", jobId)
+	}
 	reader, writer := io.Pipe()
-	container.stderr[0].AddWriter(writer, "")
+	container.stderr[jobId].AddWriter(writer, "")
 	return utils.NewBufReader(reader), nil
 }
 

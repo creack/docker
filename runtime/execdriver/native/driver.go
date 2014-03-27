@@ -137,7 +137,7 @@ func (d *driver) Exec(c *execdriver.Command, nspid int, pipes *execdriver.Pipes)
 
 	cmd := exec.Command("nsinit", args...)
 	cmd.Dir = "/var/lib/docker-btrfs/execdriver/native/" + c.ID
-	cmd.Stdin = nil
+	cmd.Stdin = pipes.Stdin
 	cmd.Stdout = pipes.Stdout
 	cmd.Stderr = pipes.Stderr
 

@@ -143,6 +143,8 @@ func (runtime *Runtime) Register(container *Container) error {
 
 	container.runtime = runtime
 
+	// During register, we create the main pipe. Stick to 0.
+
 	// Attach to stdout and stderr
 	container.stderr[0] = utils.NewWriteBroadcaster()
 	container.stdout[0] = utils.NewWriteBroadcaster()
@@ -586,7 +588,7 @@ func (runtime *Runtime) Exec(config *runconfig.Config) (*Container, []string, er
 	println("job id!:", jobId)
 	//	jobId = 1
 
-	pipes := execdriver.NewPipes(container.stdin[0], container.stdout[0], container.stderr[0], container.Config.OpenStdin)
+	pipes := execdriver.NewPipes(container.stdin[jobId], container.stdout[jobId], container.stderr[jobId], config.OpenStdin)
 
 	runtime.execDriver.Exec(container.command[jobId], container.command[0].Process.Pid, pipes)
 

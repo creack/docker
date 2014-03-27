@@ -59,10 +59,10 @@ type Container struct {
 	ExecDriver     string
 
 	command   []*execdriver.Command
-	stdout    *utils.WriteBroadcaster
-	stderr    *utils.WriteBroadcaster
-	stdin     io.ReadCloser
-	stdinPipe io.WriteCloser
+	stdout    []*utils.WriteBroadcaster
+	stderr    []*utils.WriteBroadcaster
+	stdin     []io.ReadCloser
+	stdinPipe []io.WriteCloser
 
 	runtime *Runtime
 
@@ -584,10 +584,10 @@ func (container *Container) Start() (err error) {
 	}
 
 	// Setup logging of stdout and stderr to disk
-	if err := container.runtime.LogToDisk(container.stdout, container.logPath("json"), "stdout"); err != nil {
+	if err := container.runtime.LogToDisk(container.stdout[0], container.logPath("json"), "stdout"); err != nil {
 		return err
 	}
-	if err := container.runtime.LogToDisk(container.stderr, container.logPath("json"), "stderr"); err != nil {
+	if err := container.runtime.LogToDisk(container.stderr[0], container.logPath("json"), "stderr"); err != nil {
 		return err
 	}
 	container.waitLock = make(chan struct{})
@@ -653,18 +653,18 @@ func (container *Container) Output() (output []byte, err error) {
 // a kind of "broadcaster".
 
 func (container *Container) StdinPipe() (io.WriteCloser, error) {
-	return container.stdinPipe, nil
+	return container.stdinPipe[0], nil
 }
 
 func (container *Container) StdoutPipe() (io.ReadCloser, error) {
 	reader, writer := io.Pipe()
-	container.stdout.AddWriter(writer, "")
+	container.stdout[0].AddWriter(writer, "")
 	return utils.NewBufReader(reader), nil
 }
 
 func (container *Container) StderrPipe() (io.ReadCloser, error) {
 	reader, writer := io.Pipe()
-	container.stderr.AddWriter(writer, "")
+	container.stderr[0].AddWriter(writer, "")
 	return utils.NewBufReader(reader), nil
 }
 
@@ -826,7 +826,7 @@ func (container *Container) monitor(callback execdriver.StartCallback) error {
 		exitCode int
 	)
 
-	pipes := execdriver.NewPipes(container.stdin, container.stdout, container.stderr, container.Config.OpenStdin)
+	pipes := execdriver.NewPipes(container.stdin[0], container.stdout[0], container.stderr[0], container.Config.OpenStdin)
 	exitCode, err = container.runtime.Run(container, pipes, callback)
 	if err != nil {
 		utils.Errorf("Error running container: %s", err)
@@ -852,7 +852,7 @@ func (container *Container) monitor(callback execdriver.StartCallback) error {
 
 	// Re-create a brand new stdin pipe once the container exited
 	if container.Config.OpenStdin {
-		container.stdin, container.stdinPipe = io.Pipe()
+		container.stdin[0], container.stdinPipe[0] = io.Pipe()
 	}
 
 	if container.runtime != nil && container.runtime.srv != nil {
@@ -874,14 +874,14 @@ func (container *Container) cleanup() {
 		}
 	}
 	if container.Config.OpenStdin {
-		if err := container.stdin.Close(); err != nil {
+		if err := container.stdin[0].Close(); err != nil {
 			utils.Errorf("%s: Error close stdin: %s", container.ID, err)
 		}
 	}
-	if err := container.stdout.CloseWriters(); err != nil {
+	if err := container.stdout[0].CloseWriters(); err != nil {
 		utils.Errorf("%s: Error close stdout: %s", container.ID, err)
 	}
-	if err := container.stderr.CloseWriters(); err != nil {
+	if err := container.stderr[0].CloseWriters(); err != nil {
 		utils.Errorf("%s: Error close stderr: %s", container.ID, err)
 	}
 	if container.command != nil && container.command[0].Terminal != nil {

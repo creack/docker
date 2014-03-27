@@ -110,7 +110,13 @@ func (runtime *Runtime) containerRoot(id string) string {
 // Load reads the contents of a container from disk
 // This is typically done at startup.
 func (runtime *Runtime) load(id string) (*Container, error) {
-	container := &Container{root: runtime.containerRoot(id)}
+	container := &Container{
+		root:      runtime.containerRoot(id),
+		stdin:     make([]io.ReadCloser, 1),
+		stdout:    make([]*utils.WriteBroadcaster, 1),
+		stderr:    make([]*utils.WriteBroadcaster, 1),
+		stdinPipe: make([]io.WriteCloser, 1),
+	}
 	if err := container.FromDisk(); err != nil {
 		return nil, err
 	}
@@ -138,13 +144,13 @@ func (runtime *Runtime) Register(container *Container) error {
 	container.runtime = runtime
 
 	// Attach to stdout and stderr
-	container.stderr = utils.NewWriteBroadcaster()
-	container.stdout = utils.NewWriteBroadcaster()
+	container.stderr[0] = utils.NewWriteBroadcaster()
+	container.stdout[0] = utils.NewWriteBroadcaster()
 	// Attach to stdin
 	if container.Config.OpenStdin {
-		container.stdin, container.stdinPipe = io.Pipe()
+		container.stdin[0], container.stdinPipe[0] = io.Pipe()
 	} else {
-		container.stdinPipe = utils.NopWriteCloser(ioutil.Discard) // Silently drop stdin
+		container.stdinPipe[0] = utils.NopWriteCloser(ioutil.Discard) // Silently drop stdin
 	}
 	// done
 	runtime.containers.PushBack(container)
@@ -434,23 +440,23 @@ func (runtime *Runtime) Create(config *runconfig.Config, name string) (*Containe
 		config.Hostname = id[:12]
 	}
 
-	// var args []string
-	// var entrypoint string
+	var args []string
+	var entrypoint string
 
-	// if len(config.Entrypoint) != 0 {
-	// 	entrypoint = config.Entrypoint[0]
-	// 	args = append(config.Entrypoint[1:], config.Cmd...)
-	// } else {
-	// 	entrypoint = config.Cmd[0]
-	// 	args = config.Cmd[1:]
-	// }
+	if len(config.Entrypoint) != 0 {
+		entrypoint = config.Entrypoint[0]
+		args = append(config.Entrypoint[1:], config.Cmd...)
+	} else {
+		entrypoint = config.Cmd[0]
+		args = config.Cmd[1:]
+	}
 
 	container := &Container{
 		// FIXME: we should generate the ID here instead of receiving it as an argument
-		ID:      id,
-		Created: time.Now().UTC(),
-		// Path:            entrypoint,
-		// Args:            args, //FIXME: de-duplicate from config
+		ID:              id,
+		Created:         time.Now().UTC(),
+		Path:            entrypoint,
+		Args:            args, //FIXME: de-duplicate from config
 		Config:          config,
 		hostConfig:      &runconfig.HostConfig{},
 		Image:           img.ID, // Always use the resolved image id
@@ -458,6 +464,10 @@ func (runtime *Runtime) Create(config *runconfig.Config, name string) (*Containe
 		Name:            name,
 		Driver:          runtime.driver.String(),
 		ExecDriver:      runtime.execDriver.Name(),
+		stdin:           make([]io.ReadCloser, 1),
+		stdout:          make([]*utils.WriteBroadcaster, 1),
+		stderr:          make([]*utils.WriteBroadcaster, 1),
+		stdinPipe:       make([]io.WriteCloser, 1),
 	}
 	container.root = runtime.containerRoot(container.ID)
 	// Step 1: create the container directory.
@@ -576,7 +586,7 @@ func (runtime *Runtime) Exec(config *runconfig.Config) (*Container, []string, er
 	println("job id!:", jobId)
 	//	jobId = 1
 
-	pipes := execdriver.NewPipes(container.stdin, container.stdout, container.stderr, container.Config.OpenStdin)
+	pipes := execdriver.NewPipes(container.stdin[0], container.stdout[0], container.stderr[0], container.Config.OpenStdin)
 
 	runtime.execDriver.Exec(container.command[jobId], container.command[0].Process.Pid, pipes)
 

@@ -117,41 +117,35 @@ func (d *driver) Exec(c *execdriver.Command, nspid int, pipes *execdriver.Pipes)
 		return -1, err
 	}
 	var (
-		term      nsinit.Terminal
-		container = createContainer(c)
-		args      = append([]string{c.Entrypoint}, c.Arguments...)
+		args = append([]string{c.Entrypoint}, c.Arguments...)
 	)
-	if c.Tty {
-		term = &dockerTtyTerm{
-			pipes: pipes,
-		}
-	} else {
-		term = &dockerStdTerm{
-			pipes: pipes,
-		}
-	}
-	c.Terminal = term
-
-	ns := nsinit.NewNsInit(nil, nil, createLogger(os.Getenv("DEBUG")))
-
-	fmt.Printf("process: %#v\n", args)
 
 	cmd := exec.Command("nsinit", args...)
 	cmd.Dir = path.Join(d.root, c.ID)
-	cmd.Stdin = pipes.Stdin
-	cmd.Stdout = pipes.Stdout
-	cmd.Stderr = pipes.Stderr
 
-	err := cmd.Run()
-	if err != nil {
-		return -1, err
+	if c.Tty {
+		tty, err := execdriver.NewTtyConsole(c, pipes)
+		if err != nil {
+			return 0, err
+		}
+		if err := tty.AttachPipes(cmd, pipes); err != nil {
+			return 0, err
+		}
+	} else {
+		cmd.Stdin = pipes.Stdin
+		cmd.Stdout = pipes.Stdout
+		cmd.Stderr = pipes.Stderr
 	}
-	status := cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
-	fmt.Printf("RETURN--- err: %v, status: %d\n", err, status)
-	fmt.Printf("Args: %#v\n", args)
-	return status, nil
 
-	return ns.ExecIn(container, nspid, args)
+	// monitor()
+	go func() {
+		err := cmd.Run()
+		if err != nil {
+			panic(err)
+		}
+		//status := cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
+	}()
+	return 0, nil
 }
 
 func (d *driver) Kill(p *execdriver.Command, sig int) error {

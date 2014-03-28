@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"syscall"
 )
 
 func SetTerminal(command *Command, pipes *Pipes) error {
@@ -70,6 +71,9 @@ func (t *TtyConsole) AttachPipes(command *exec.Cmd, pipes *Pipes) error {
 
 	if pipes.Stdin != nil {
 		command.Stdin = t.SlavePty
+		if command.SysProcAttr == nil {
+			command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		}
 		command.SysProcAttr.Setctty = true
 
 		go func() {

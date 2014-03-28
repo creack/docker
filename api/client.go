@@ -1613,7 +1613,20 @@ func (cli *DockerCli) CmdAttach(args ...string) error {
 		cmd.Usage()
 		return nil
 	}
+
 	name := cmd.Arg(0)
+	jobId := 0
+
+	nameSplit := strings.SplitN(name, "%", 2)
+	if len(nameSplit) == 2 {
+		name = nameSplit[0]
+		jId, err := strconv.Atoi(nameSplit[1])
+		if err != nil {
+			return err
+		}
+		jobId = jId
+	}
+
 	body, _, err := readBody(cli.call("GET", "/containers/"+name+"/json", nil, false))
 	if err != nil {
 		return err
@@ -1630,7 +1643,7 @@ func (cli *DockerCli) CmdAttach(args ...string) error {
 	}
 
 	if container.Config.Tty && cli.isTerminal {
-		if err := cli.monitorTtySize(cmd.Arg(0)); err != nil {
+		if err := cli.monitorTtySize(name); err != nil {
 			utils.Debugf("Error monitoring TTY size: %s", err)
 		}
 	}
@@ -1645,17 +1658,17 @@ func (cli *DockerCli) CmdAttach(args ...string) error {
 	}
 	v.Set("stdout", "1")
 	v.Set("stderr", "1")
-
+	v.Set("jobId", fmt.Sprint(jobId))
 	if *proxy && !container.Config.Tty {
 		sigc := cli.forwardAllSignals(cmd.Arg(0))
 		defer signal.StopCatch(sigc)
 	}
 
-	if err := cli.hijack("POST", "/containers/"+cmd.Arg(0)+"/attach?"+v.Encode(), container.Config.Tty, in, cli.out, cli.err, nil); err != nil {
+	if err := cli.hijack("POST", "/containers/"+name+"/attach?"+v.Encode(), container.Config.Tty, in, cli.out, cli.err, nil); err != nil {
 		return err
 	}
 
-	_, status, err := getExitCode(cli, cmd.Arg(0))
+	_, status, err := getExitCode(cli, name)
 	if err != nil {
 		return err
 	}

@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -136,16 +137,19 @@ func (d *driver) Exec(c *execdriver.Command, nspid int, pipes *execdriver.Pipes)
 	fmt.Printf("process: %#v\n", args)
 
 	cmd := exec.Command("nsinit", args...)
-	cmd.Dir = "/var/lib/docker-btrfs/execdriver/native/" + c.ID
+	cmd.Dir = path.Join(d.root, c.ID)
 	cmd.Stdin = pipes.Stdin
 	cmd.Stdout = pipes.Stdout
 	cmd.Stderr = pipes.Stderr
 
 	err := cmd.Run()
+	if err != nil {
+		return -1, err
+	}
 	status := cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
 	fmt.Printf("RETURN--- err: %v, status: %d\n", err, status)
 	fmt.Printf("Args: %#v\n", args)
-	return status, err
+	return status, nil
 
 	return ns.ExecIn(container, nspid, args)
 }

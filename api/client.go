@@ -1768,6 +1768,7 @@ func (cli *DockerCli) CmdTag(args ...string) error {
 }
 
 func (cli *DockerCli) CmdExec(args ...string) error {
+	return fmt.Errorf("Unsupported")
 	config, _, cmd, err := runconfig.ParseSubcommand(cli.Subcmd("exec", "[OPTIONS] IMAGE [COMMAND] [ARG...]", "Run a command in an existing container"), args, nil)
 	if err != nil {
 		return err

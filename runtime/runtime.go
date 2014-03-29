@@ -466,7 +466,7 @@ func (runtime *Runtime) Create(config *runconfig.Config, name string) (*Containe
 		Name:            name,
 		Driver:          runtime.driver.String(),
 		ExecDriver:      runtime.execDriver.Name(),
-		stdin:           make([]io.ReadCloser, 1),
+		stdin:           make([]io.ReadCloser, 1), // We make with size one to host the original command.
 		stdout:          make([]*utils.WriteBroadcaster, 1),
 		stderr:          make([]*utils.WriteBroadcaster, 1),
 		stdinPipe:       make([]io.WriteCloser, 1),
@@ -551,6 +551,8 @@ func (runtime *Runtime) Create(config *runconfig.Config, name string) (*Containe
 }
 
 func (runtime *Runtime) Exec(config *runconfig.Config) (*Container, []string, error) {
+	return nil, nil, fmt.Errorf("Unsupported")
+
 	// Lookup container
 	container := runtime.Get(config.Image)
 	if !container.State.Running {
@@ -560,56 +562,22 @@ func (runtime *Runtime) Exec(config *runconfig.Config) (*Container, []string, er
 	if container.command == nil {
 		return nil, nil, fmt.Errorf("The container's command is not initialized")
 	}
-	println()
-	println()
-	println()
-	fmt.Printf("cmd before: %v\n", config.Cmd)
 	container.Config = config
 	populateCommand(container)
 
 	// This is valid only after populateCommand
 	jobId := len(container.command) - 1
-
-	fmt.Printf("cmd after: %v\n", container.Config.Cmd)
-
-	fmt.Printf("cmd.Cmd after: %s, %v\n", container.command[jobId].Cmd.Path, container.command[jobId].Cmd.Args)
-
 	container.command[jobId].Entrypoint = "exec"
 	container.command[jobId].Arguments = config.Cmd
-	fmt.Printf("Entrypoint: %s, Args: %v\n", container.command[jobId].Entrypoint, container.command[jobId].Arguments)
-	println()
-	println()
-	println()
 
 	if jobId < 1 {
 		return nil, nil, fmt.Errorf("Unexpected error during exec: Exec can't be the first command")
 	}
 
-	println("job id!:", jobId)
-	//	jobId = 1
-
 	pipes := execdriver.NewPipes(container.stdin[jobId], container.stdout[jobId], container.stderr[jobId], config.OpenStdin)
-
-	runtime.execDriver.Exec(container.command[jobId], container.command[0].Process.Pid, pipes)
-
-	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
-		return nil, nil, fmt.Errorf("No command specified")
-	}
-
-	// var args []string
-	// var entrypoint string
-
-	// if len(config.Entrypoint) != 0 {
-	// 	entrypoint = config.Entrypoint[0]
-	// 	args = append(config.Entrypoint[1:], config.Cmd...)
-	// } else {
-	// 	entrypoint = config.Cmd[0]
-	// 	args = config.Cmd[1:]
-	// }
-
-	container.root = runtime.containerRoot(container.ID)
-
-	return container, nil, nil
+	// cntainer.command[0].Process.Pid is the pid of the first command, therefore the pid of the namespace to join
+	_, err := runtime.execDriver.Exec(container.command[jobId], container.command[0].Process.Pid, pipes)
+	return container, nil, err
 }
 
 // Commit creates a new filesystem image from the current state of a container.

@@ -113,6 +113,8 @@ func (d *driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 }
 
 func (d *driver) Exec(c *execdriver.Command, nspid int, pipes *execdriver.Pipes) (int, error) {
+	return -1, fmt.Errorf("Unsupported")
+
 	if err := d.validateCommand(c); err != nil {
 		return -1, err
 	}

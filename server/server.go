@@ -1676,11 +1676,10 @@ func (srv *Server) ContainerExec(job *engine.Job) engine.Status {
 	}
 	config := runconfig.ContainerConfigFromJob(job)
 
-	container, _, err := srv.runtime.Exec(config)
+	_, _, err := srv.runtime.Exec(config)
 	if err != nil {
 		return job.Error(err)
 	}
-	job.Logf("--------> %#v\n", container)
 	return engine.StatusOK
 }
 

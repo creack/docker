@@ -76,7 +76,7 @@ type TtyTerminal interface {
 
 type Driver interface {
 	Run(c *Command, pipes *Pipes, startCallback StartCallback) (exitCode int, err error) // Run executes the process and blocks until the process exits and returns the exit code
-	Exec(c *Command, nspid int, pipes *Pipes) (exutCide int, err error)
+	Exec(c *Command, nspid int, pipes *Pipes) (exitCode int, err error)
 
 	Kill(c *Command, sig int) error
 	Name() string                                 // Driver name

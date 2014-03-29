@@ -551,6 +551,7 @@ func postImagesLoad(eng *engine.Engine, version version.Version, w http.Response
 }
 
 func postContainersExec(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	return fmt.Errorf("Unsupported")
 	if err := parseForm(r); err != nil {
 		return nil
 	}

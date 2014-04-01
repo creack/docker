@@ -172,6 +172,7 @@ complete -c docker -A -f -n '__fish_seen_subcommand_from pull' -a '(__fish_print
 
 # push
 complete -c docker -f -n '__fish_docker_no_subcommand' -a push -d 'Push an image or a repository to the docker registry server'
+complete -c docker -A -f -n '__fish_seen_subcommand_from push' -s t -l tag -d 'Push tagged image in repository'
 complete -c docker -A -f -n '__fish_seen_subcommand_from push' -a '(__fish_print_docker_images)' -d "Image"
 complete -c docker -A -f -n '__fish_seen_subcommand_from push' -a '(__fish_print_docker_repositories)' -d "Repository"
 

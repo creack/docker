@@ -41,7 +41,10 @@ func pingRegistryEndpoint(endpoint string) (bool, error) {
 		conn.SetDeadline(time.Now().Add(time.Duration(10) * time.Second))
 		return conn, nil
 	}
-	httpTransport := &http.Transport{Dial: httpDial}
+	httpTransport := &http.Transport{
+		Dial:  httpDial,
+		Proxy: http.ProxyFromEnvironment,
+	}
 	client := &http.Client{Transport: httpTransport}
 	resp, err := client.Get(endpoint + "_ping")
 	if err != nil {
@@ -98,16 +101,11 @@ func ResolveRepositoryName(reposName string) (string, string, error) {
 		return "", "", ErrInvalidRepositoryName
 	}
 	nameParts := strings.SplitN(reposName, "/", 2)
-	if !strings.Contains(nameParts[0], ".") && !strings.Contains(nameParts[0], ":") &&
-		nameParts[0] != "localhost" {
+	if len(nameParts) == 1 || (!strings.Contains(nameParts[0], ".") && !strings.Contains(nameParts[0], ":") &&
+		nameParts[0] != "localhost") {
 		// This is a Docker Index repos (ex: samalba/hipache or ubuntu)
 		err := validateRepositoryName(reposName)
 		return IndexServerAddress(), reposName, err
-	}
-	if len(nameParts) < 2 {
-		// There is a dot in repos name (and no registry address)
-		// Is it a Registry address without repos name?
-		return "", "", ErrInvalidRepositoryName
 	}
 	hostname := nameParts[0]
 	reposName = nameParts[1]
@@ -414,6 +412,9 @@ func (r *Registry) PushImageJSONRegistry(imgData *ImgData, jsonRaw []byte, regis
 		return fmt.Errorf("Failed to upload metadata: %s", err)
 	}
 	defer res.Body.Close()
+	if res.StatusCode == 401 && strings.HasPrefix(registry, "http://") {
+		return utils.NewHTTPRequestError("HTTP code 401, Docker will not send auth headers over HTTP.", res)
+	}
 	if res.StatusCode != 200 {
 		errBody, err := ioutil.ReadAll(res.Body)
 		if err != nil {
@@ -434,11 +435,13 @@ func (r *Registry) PushImageLayerRegistry(imgID string, layer io.Reader, registr
 
 	utils.Debugf("[registry] Calling PUT %s", registry+"images/"+imgID+"/layer")
 
+	tarsumLayer := &utils.TarSum{Reader: layer}
 	h := sha256.New()
-	checksumLayer := &utils.CheckSum{Reader: layer, Hash: h}
-	tarsumLayer := &utils.TarSum{Reader: checksumLayer}
+	h.Write(jsonRaw)
+	h.Write([]byte{'\n'})
+	checksumLayer := &utils.CheckSum{Reader: tarsumLayer, Hash: h}
 
-	req, err := r.reqFactory.NewRequest("PUT", registry+"images/"+imgID+"/layer", tarsumLayer)
+	req, err := r.reqFactory.NewRequest("PUT", registry+"images/"+imgID+"/layer", checksumLayer)
 	if err != nil {
 		return "", "", err
 	}

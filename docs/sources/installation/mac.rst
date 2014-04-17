@@ -41,6 +41,18 @@ that is used for the job.
 
 .. _GitHub page: https://github.com/boot2docker/boot2docker
 
+With Homebrew
+~~~~~~~~~~~~~
+
+If you are using Homebrew on your machine, simply run the following command to install ``boot2docker``:
+
+.. code-block:: bash
+
+    brew install boot2docker
+
+Manual installation
+~~~~~~~~~~~~~~~~~~~
+
 Open up a new terminal window, if you have not already.
 
 Run the following commands to get boot2docker:
@@ -61,15 +73,28 @@ Docker OS X Client
 
 The ``docker`` daemon is accessed using the ``docker`` client.
 
+With Homebrew
+~~~~~~~~~~~~~
+
+Run the following command to install the ``docker`` client:
+
+.. code-block:: bash
+
+    brew install docker
+    
+Manual installation
+~~~~~~~~~~~~~~~~~~~
+
 Run the following commands to get it downloaded and set up:
 
 .. code-block:: bash
 
-    # Get the file
-    curl -o docker https://get.docker.io/builds/Darwin/x86_64/docker-latest
-
-    # Mark it executable
-    chmod +x docker
+    # Get the docker client file
+    DIR=$(mktemp -d ${TMPDIR:-/tmp}/dockerdl.XXXXXXX) && \
+    curl -f -o $DIR/ld.tgz https://get.docker.io/builds/Darwin/x86_64/docker-latest.tgz && \
+    gunzip $DIR/ld.tgz && \
+    tar xvf $DIR/ld.tar -C $DIR/ && \
+    cp $DIR/usr/local/bin/docker ./docker
 
     # Set the environment variable for the docker daemon
     export DOCKER_HOST=tcp://127.0.0.1:4243

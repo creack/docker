@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 DEST=$1
 
@@ -11,5 +12,6 @@ go build \
 	" \
 	./docker
 echo "Created binary: $DEST/docker-$VERSION"
+ln -sf "docker-$VERSION" "$DEST/docker"
 
 hash_files "$DEST/docker-$VERSION"

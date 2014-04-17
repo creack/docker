@@ -1,9 +1,18 @@
-.PHONY: all binary build cross default docs docs-build docs-shell shell test test-integration
+.PHONY: all binary build cross default docs docs-build docs-shell shell test test-integration test-integration-cli
 
-GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
-DOCKER_IMAGE := docker:$(GIT_BRANCH)
-DOCKER_DOCS_IMAGE := docker-docs:$(GIT_BRANCH)
-DOCKER_RUN_DOCKER := docker run --rm -i -t --privileged -e TESTFLAGS -v "$(CURDIR)/bundles:/go/src/github.com/dotcloud/docker/bundles" "$(DOCKER_IMAGE)"
+# to allow `make BINDDIR=. shell` or `make BINDDIR= test`
+BINDDIR := bundles
+# to allow `make DOCSPORT=9000 docs`
+DOCSPORT := 8000
+
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
+DOCKER_IMAGE := docker$(if $(GIT_BRANCH),:$(GIT_BRANCH))
+DOCKER_DOCS_IMAGE := docker-docs$(if $(GIT_BRANCH),:$(GIT_BRANCH))
+DOCKER_MOUNT := $(if $(BINDDIR),-v "$(CURDIR)/$(BINDDIR):/go/src/github.com/dotcloud/docker/$(BINDDIR)")
+
+DOCKER_RUN_DOCKER := docker run --rm -it --privileged -e TESTFLAGS -e DOCKER_GRAPHDRIVER -e DOCKER_EXECDRIVER $(DOCKER_MOUNT) "$(DOCKER_IMAGE)"
+# to allow `make DOCSDIR=docs docs-shell`
+DOCKER_RUN_DOCS := docker run --rm -it -p $(if $(DOCSPORT),$(DOCSPORT):)8000 $(if $(DOCSDIR),-v $(CURDIR)/$(DOCSDIR):/$(DOCSDIR)) -e AWS_S3_BUCKET 
 
 default: binary
 
@@ -17,16 +26,22 @@ cross: build
 	$(DOCKER_RUN_DOCKER) hack/make.sh binary cross
 
 docs: docs-build
-	docker run --rm -i -t -p 8000:8000 "$(DOCKER_DOCS_IMAGE)"
+	$(DOCKER_RUN_DOCS) "$(DOCKER_DOCS_IMAGE)" mkdocs serve
 
 docs-shell: docs-build
-	docker run --rm -i -t -p 8000:8000 "$(DOCKER_DOCS_IMAGE)" bash
+	$(DOCKER_RUN_DOCS) "$(DOCKER_DOCS_IMAGE)" bash
+
+docs-release: docs-build
+	$(DOCKER_RUN_DOCS) "$(DOCKER_DOCS_IMAGE)" ./release.sh
 
 test: build
-	$(DOCKER_RUN_DOCKER) hack/make.sh test test-integration
+	$(DOCKER_RUN_DOCKER) hack/make.sh binary test test-integration test-integration-cli
 
 test-integration: build
 	$(DOCKER_RUN_DOCKER) hack/make.sh test-integration
+
+test-integration-cli: build
+	$(DOCKER_RUN_DOCKER) hack/make.sh binary test-integration-cli
 
 shell: build
 	$(DOCKER_RUN_DOCKER) bash

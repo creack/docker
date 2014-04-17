@@ -40,12 +40,19 @@ echo
 
 # List of bundles to create when no argument is passed
 DEFAULT_BUNDLES=(
+	validate-dco
+	validate-gofmt
+	
 	binary
+	
 	test
 	test-integration
+	test-integration-cli
+	
 	dynbinary
 	dyntest
 	dyntest-integration
+	
 	cover
 	cross
 	tgz
@@ -89,7 +96,7 @@ LDFLAGS='
 '
 LDFLAGS_STATIC='-linkmode external'
 EXTLDFLAGS_STATIC='-static'
-BUILDFLAGS=( -a -tags "netgo $DOCKER_BUILDTAGS" )
+BUILDFLAGS=( -a -tags "netgo static_build $DOCKER_BUILDTAGS" )
 
 # A few more flags that are specific just to building a completely-static binary (see hack/make/binary)
 # PLEASE do not use these anywhere else.
@@ -99,6 +106,16 @@ LDFLAGS_STATIC_DOCKER="
 	-X github.com/dotcloud/docker/dockerversion.IAMSTATIC true
 	-extldflags \"$EXTLDFLAGS_STATIC_DOCKER\"
 "
+
+if [ "$(uname -s)" = 'FreeBSD' ]; then
+	# Tell cgo the compiler is Clang, not GCC
+	# https://code.google.com/p/go/source/browse/src/cmd/cgo/gcc.go?spec=svne77e74371f2340ee08622ce602e9f7b15f29d8d3&r=e6794866ebeba2bf8818b9261b54e2eef1c9e588#752
+	export CC=clang
+
+	# "-extld clang" is a workaround for
+	# https://code.google.com/p/go/issues/detail?id=6845
+	LDFLAGS="$LDFLAGS -extld clang"
+fi
 
 HAVE_GO_TEST_COVER=
 if \
@@ -135,10 +152,11 @@ go_test_dir() {
 # holding certain files ($1 parameter), and prints their paths on standard
 # output, one per line.
 find_dirs() {
-	find -not \( \
+	find . -not \( \
 		\( \
 			-wholename './vendor' \
 			-o -wholename './integration' \
+			-o -wholename './integration-cli' \
 			-o -wholename './contrib' \
 			-o -wholename './pkg/mflag/example' \
 			-o -wholename './.git' \

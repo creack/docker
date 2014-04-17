@@ -163,69 +163,27 @@ func TestCompare(t *testing.T) {
 	volumes1 := make(map[string]struct{})
 	volumes1["/test1"] = struct{}{}
 	config1 := Config{
-		Dns:         []string{"1.1.1.1", "2.2.2.2"},
-		DnsSearch:   []string{"foo", "bar"},
-		PortSpecs:   []string{"1111:1111", "2222:2222"},
-		Env:         []string{"VAR1=1", "VAR2=2"},
-		VolumesFrom: "11111111",
-		Volumes:     volumes1,
-	}
-	config2 := Config{
-		Dns:         []string{"0.0.0.0", "2.2.2.2"},
-		DnsSearch:   []string{"foo", "bar"},
-		PortSpecs:   []string{"1111:1111", "2222:2222"},
-		Env:         []string{"VAR1=1", "VAR2=2"},
-		VolumesFrom: "11111111",
-		Volumes:     volumes1,
+		PortSpecs: []string{"1111:1111", "2222:2222"},
+		Env:       []string{"VAR1=1", "VAR2=2"},
+		Volumes:   volumes1,
 	}
 	config3 := Config{
-		Dns:         []string{"1.1.1.1", "2.2.2.2"},
-		DnsSearch:   []string{"foo", "bar"},
-		PortSpecs:   []string{"0000:0000", "2222:2222"},
-		Env:         []string{"VAR1=1", "VAR2=2"},
-		VolumesFrom: "11111111",
-		Volumes:     volumes1,
-	}
-	config4 := Config{
-		Dns:         []string{"1.1.1.1", "2.2.2.2"},
-		DnsSearch:   []string{"foo", "bar"},
-		PortSpecs:   []string{"0000:0000", "2222:2222"},
-		Env:         []string{"VAR1=1", "VAR2=2"},
-		VolumesFrom: "22222222",
-		Volumes:     volumes1,
+		PortSpecs: []string{"0000:0000", "2222:2222"},
+		Env:       []string{"VAR1=1", "VAR2=2"},
+		Volumes:   volumes1,
 	}
 	volumes2 := make(map[string]struct{})
 	volumes2["/test2"] = struct{}{}
 	config5 := Config{
-		Dns:         []string{"1.1.1.1", "2.2.2.2"},
-		DnsSearch:   []string{"foo", "bar"},
-		PortSpecs:   []string{"0000:0000", "2222:2222"},
-		Env:         []string{"VAR1=1", "VAR2=2"},
-		VolumesFrom: "11111111",
-		Volumes:     volumes2,
-	}
-	config6 := Config{
-		Dns:         []string{"1.1.1.1", "2.2.2.2"},
-		DnsSearch:   []string{"foos", "bars"},
-		PortSpecs:   []string{"1111:1111", "2222:2222"},
-		Env:         []string{"VAR1=1", "VAR2=2"},
-		VolumesFrom: "11111111",
-		Volumes:     volumes1,
-	}
-	if Compare(&config1, &config2) {
-		t.Fatalf("Compare should return false, Dns are different")
+		PortSpecs: []string{"0000:0000", "2222:2222"},
+		Env:       []string{"VAR1=1", "VAR2=2"},
+		Volumes:   volumes2,
 	}
 	if Compare(&config1, &config3) {
 		t.Fatalf("Compare should return false, PortSpecs are different")
 	}
-	if Compare(&config1, &config4) {
-		t.Fatalf("Compare should return false, VolumesFrom are different")
-	}
 	if Compare(&config1, &config5) {
 		t.Fatalf("Compare should return false, Volumes are different")
-	}
-	if Compare(&config1, &config6) {
-		t.Fatalf("Compare should return false, DnsSearch are different")
 	}
 	if !Compare(&config1, &config1) {
 		t.Fatalf("Compare should return true")
@@ -237,17 +195,14 @@ func TestMerge(t *testing.T) {
 	volumesImage["/test1"] = struct{}{}
 	volumesImage["/test2"] = struct{}{}
 	configImage := &Config{
-		Dns:         []string{"1.1.1.1", "2.2.2.2"},
-		PortSpecs:   []string{"1111:1111", "2222:2222"},
-		Env:         []string{"VAR1=1", "VAR2=2"},
-		VolumesFrom: "1111",
-		Volumes:     volumesImage,
+		PortSpecs: []string{"1111:1111", "2222:2222"},
+		Env:       []string{"VAR1=1", "VAR2=2"},
+		Volumes:   volumesImage,
 	}
 
 	volumesUser := make(map[string]struct{})
 	volumesUser["/test3"] = struct{}{}
 	configUser := &Config{
-		Dns:       []string{"3.3.3.3"},
 		PortSpecs: []string{"3333:2222", "3333:3333"},
 		Env:       []string{"VAR2=3", "VAR3=3"},
 		Volumes:   volumesUser,
@@ -255,15 +210,6 @@ func TestMerge(t *testing.T) {
 
 	if err := Merge(configUser, configImage); err != nil {
 		t.Error(err)
-	}
-
-	if len(configUser.Dns) != 3 {
-		t.Fatalf("Expected 3 dns, 1.1.1.1, 2.2.2.2 and 3.3.3.3, found %d", len(configUser.Dns))
-	}
-	for _, dns := range configUser.Dns {
-		if dns != "1.1.1.1" && dns != "2.2.2.2" && dns != "3.3.3.3" {
-			t.Fatalf("Expected 1.1.1.1 or 2.2.2.2 or 3.3.3.3, found %s", dns)
-		}
 	}
 
 	if len(configUser.ExposedPorts) != 3 {
@@ -290,10 +236,6 @@ func TestMerge(t *testing.T) {
 		if v != "/test1" && v != "/test2" && v != "/test3" {
 			t.Fatalf("Expected /test1 or /test2 or /test3, found %s", v)
 		}
-	}
-
-	if configUser.VolumesFrom != "1111" {
-		t.Fatalf("Expected VolumesFrom to be 1111, found %s", configUser.VolumesFrom)
 	}
 
 	ports, _, err := nat.ParsePortSpecs([]string{"0000"})

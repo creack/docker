@@ -1,10 +1,9 @@
 package daemonconfig
 
 import (
-	"net"
-
+	"github.com/dotcloud/docker/daemon/networkdriver"
 	"github.com/dotcloud/docker/engine"
-	"github.com/dotcloud/docker/runtime/networkdriver"
+	"net"
 )
 
 const (
@@ -29,6 +28,7 @@ type Config struct {
 	ExecDriver                  string
 	Mtu                         int
 	DisableNetwork              bool
+	EnableSelinuxSupport        bool
 }
 
 // ConfigFromJob creates and returns a new DaemonConfig object
@@ -46,6 +46,7 @@ func ConfigFromJob(job *engine.Job) *Config {
 		InterContainerCommunication: job.GetenvBool("InterContainerCommunication"),
 		GraphDriver:                 job.Getenv("GraphDriver"),
 		ExecDriver:                  job.Getenv("ExecDriver"),
+		EnableSelinuxSupport:        false, // FIXME: hardcoded default to disable selinux for .10 release
 	}
 	if dns := job.GetenvList("Dns"); dns != nil {
 		config.Dns = dns

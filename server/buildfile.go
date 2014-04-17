@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/dotcloud/docker/archive"
+	"github.com/dotcloud/docker/daemon"
 	"github.com/dotcloud/docker/nat"
 	"github.com/dotcloud/docker/registry"
 	"github.com/dotcloud/docker/runconfig"
-	"github.com/dotcloud/docker/runtime"
 	"github.com/dotcloud/docker/utils"
 	"io"
 	"io/ioutil"
@@ -35,8 +35,8 @@ type BuildFile interface {
 }
 
 type buildFile struct {
-	runtime *runtime.Runtime
-	srv     *Server
+	daemon *daemon.Daemon
+	srv    *Server
 
 	image      string
 	maintainer string
@@ -49,7 +49,6 @@ type buildFile struct {
 	utilizeCache bool
 	rm           bool
 
-	authConfig *registry.AuthConfig
 	configFile *registry.ConfigFile
 
 	tmpContainers map[string]struct{}
@@ -65,39 +64,30 @@ type buildFile struct {
 
 func (b *buildFile) clearTmp(containers map[string]struct{}) {
 	for c := range containers {
-		tmp := b.runtime.Get(c)
-		if err := b.runtime.Destroy(tmp); err != nil {
+		tmp := b.daemon.Get(c)
+		if err := b.daemon.Destroy(tmp); err != nil {
 			fmt.Fprintf(b.outStream, "Error removing intermediate container %s: %s\n", utils.TruncateID(c), err.Error())
 		} else {
+			delete(containers, c)
 			fmt.Fprintf(b.outStream, "Removing intermediate container %s\n", utils.TruncateID(c))
 		}
 	}
 }
 
 func (b *buildFile) CmdFrom(name string) error {
-	image, err := b.runtime.Repositories().LookupImage(name)
+	image, err := b.daemon.Repositories().LookupImage(name)
 	if err != nil {
-		if b.runtime.Graph().IsNotExist(err) {
+		if b.daemon.Graph().IsNotExist(err) {
 			remote, tag := utils.ParseRepositoryTag(name)
-			pullRegistryAuth := b.authConfig
-			if len(b.configFile.Configs) > 0 {
-				// The request came with a full auth config file, we prefer to use that
-				endpoint, _, err := registry.ResolveRepositoryName(remote)
-				if err != nil {
-					return err
-				}
-				resolvedAuth := b.configFile.ResolveAuthConfig(endpoint)
-				pullRegistryAuth = &resolvedAuth
-			}
 			job := b.srv.Eng.Job("pull", remote, tag)
 			job.SetenvBool("json", b.sf.Json())
 			job.SetenvBool("parallel", true)
-			job.SetenvJson("authConfig", pullRegistryAuth)
+			job.SetenvJson("auth", b.configFile)
 			job.Stdout.Add(b.outOld)
 			if err := job.Run(); err != nil {
 				return err
 			}
-			image, err = b.runtime.Repositories().LookupImage(name)
+			image, err = b.daemon.Repositories().LookupImage(name)
 			if err != nil {
 				return err
 			}
@@ -111,7 +101,7 @@ func (b *buildFile) CmdFrom(name string) error {
 		b.config = image.Config
 	}
 	if b.config.Env == nil || len(b.config.Env) == 0 {
-		b.config.Env = append(b.config.Env, "HOME=/", "PATH="+runtime.DefaultPathEnv)
+		b.config.Env = append(b.config.Env, "HOME=/", "PATH="+daemon.DefaultPathEnv)
 	}
 	// Process ONBUILD triggers if they exist
 	if nTriggers := len(b.config.OnBuild); nTriggers != 0 {
@@ -393,11 +383,20 @@ func (b *buildFile) checkPathForAddition(orig string) error {
 	return nil
 }
 
-func (b *buildFile) addContext(container *runtime.Container, orig, dest string, remote bool) error {
+func (b *buildFile) addContext(container *daemon.Container, orig, dest string, remote bool) error {
 	var (
+		err      error
 		origPath = path.Join(b.contextPath, orig)
 		destPath = path.Join(container.RootfsPath(), dest)
 	)
+
+	if destPath != container.RootfsPath() {
+		destPath, err = utils.FollowSymlinkInScope(destPath, container.RootfsPath())
+		if err != nil {
+			return err
+		}
+	}
+
 	// Preserve the trailing '/'
 	if strings.HasSuffix(dest, "/") {
 		destPath = destPath + "/"
@@ -410,8 +409,20 @@ func (b *buildFile) addContext(container *runtime.Container, orig, dest string, 
 		return err
 	}
 
+	chownR := func(destPath string, uid, gid int) error {
+		return filepath.Walk(destPath, func(path string, info os.FileInfo, err error) error {
+			if err := os.Lchown(path, uid, gid); err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+
 	if fi.IsDir() {
 		if err := archive.CopyWithTar(origPath, destPath); err != nil {
+			return err
+		}
+		if err := chownR(destPath, 0, 0); err != nil {
 			return err
 		}
 		return nil
@@ -441,6 +452,10 @@ func (b *buildFile) addContext(container *runtime.Container, orig, dest string, 
 		return err
 	}
 	if err := archive.CopyWithTar(origPath, destPath); err != nil {
+		return err
+	}
+
+	if err := chownR(destPath, 0, 0); err != nil {
 		return err
 	}
 	return nil
@@ -477,27 +492,35 @@ func (b *buildFile) CmdAdd(args string) error {
 	)
 
 	if utils.IsURL(orig) {
+		// Initiate the download
 		isRemote = true
 		resp, err := utils.Download(orig)
 		if err != nil {
 			return err
 		}
+
+		// Create a tmp dir
 		tmpDirName, err := ioutil.TempDir(b.contextPath, "docker-remote")
 		if err != nil {
 			return err
 		}
+
+		// Create a tmp file within our tmp dir
 		tmpFileName := path.Join(tmpDirName, "tmp")
 		tmpFile, err := os.OpenFile(tmpFileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
 			return err
 		}
 		defer os.RemoveAll(tmpDirName)
-		if _, err = io.Copy(tmpFile, resp.Body); err != nil {
+
+		// Download and dump result to tmp file
+		if _, err := io.Copy(tmpFile, resp.Body); err != nil {
 			tmpFile.Close()
 			return err
 		}
-		origPath = path.Join(filepath.Base(tmpDirName), filepath.Base(tmpFileName))
 		tmpFile.Close()
+
+		origPath = path.Join(filepath.Base(tmpDirName), filepath.Base(tmpFileName))
 
 		// Process the checksum
 		r, err := archive.Tar(tmpFileName, archive.Uncompressed)
@@ -576,7 +599,7 @@ func (b *buildFile) CmdAdd(args string) error {
 	}
 
 	// Create the container and start it
-	container, _, err := b.runtime.Create(b.config, "")
+	container, _, err := b.daemon.Create(b.config, "")
 	if err != nil {
 		return err
 	}
@@ -598,14 +621,14 @@ func (b *buildFile) CmdAdd(args string) error {
 	return nil
 }
 
-func (b *buildFile) create() (*runtime.Container, error) {
+func (b *buildFile) create() (*daemon.Container, error) {
 	if b.image == "" {
 		return nil, fmt.Errorf("Please provide a source image with `from` prior to run")
 	}
 	b.config.Image = b.image
 
 	// Create the container and start it
-	c, _, err := b.runtime.Create(b.config, "")
+	c, _, err := b.daemon.Create(b.config, "")
 	if err != nil {
 		return nil, err
 	}
@@ -619,7 +642,7 @@ func (b *buildFile) create() (*runtime.Container, error) {
 	return c, nil
 }
 
-func (b *buildFile) run(c *runtime.Container) error {
+func (b *buildFile) run(c *daemon.Container) error {
 	var errCh chan error
 
 	if b.verbose {
@@ -670,7 +693,7 @@ func (b *buildFile) commit(id string, autoCmd []string, comment string) error {
 			return nil
 		}
 
-		container, warnings, err := b.runtime.Create(b.config, "")
+		container, warnings, err := b.daemon.Create(b.config, "")
 		if err != nil {
 			return err
 		}
@@ -686,7 +709,7 @@ func (b *buildFile) commit(id string, autoCmd []string, comment string) error {
 		}
 		defer container.Unmount()
 	}
-	container := b.runtime.Get(id)
+	container := b.daemon.Get(id)
 	if container == nil {
 		return fmt.Errorf("An error occured while creating the container")
 	}
@@ -695,7 +718,7 @@ func (b *buildFile) commit(id string, autoCmd []string, comment string) error {
 	autoConfig := *b.config
 	autoConfig.Cmd = autoCmd
 	// Commit the container
-	image, err := b.runtime.Commit(container, "", "", "", b.maintainer, &autoConfig)
+	image, err := b.daemon.Commit(container, "", "", "", b.maintainer, &autoConfig)
 	if err != nil {
 		return err
 	}
@@ -736,26 +759,24 @@ func (b *buildFile) Build(context io.Reader) (string, error) {
 	if len(fileBytes) == 0 {
 		return "", ErrDockerfileEmpty
 	}
-	dockerfile := string(fileBytes)
-	dockerfile = lineContinuation.ReplaceAllString(dockerfile, "")
-	stepN := 0
+	var (
+		dockerfile = lineContinuation.ReplaceAllString(stripComments(fileBytes), "")
+		stepN      = 0
+	)
 	for _, line := range strings.Split(dockerfile, "\n") {
 		line = strings.Trim(strings.Replace(line, "\t", " ", -1), " \t\r\n")
-		// Skip comments and empty line
-		if len(line) == 0 || line[0] == '#' {
+		if len(line) == 0 {
 			continue
 		}
 		if err := b.BuildStep(fmt.Sprintf("%d", stepN), line); err != nil {
 			return "", err
+		} else if b.rm {
+			b.clearTmp(b.tmpContainers)
 		}
 		stepN += 1
-
 	}
 	if b.image != "" {
 		fmt.Fprintf(b.outStream, "Successfully built %s\n", utils.TruncateID(b.image))
-		if b.rm {
-			b.clearTmp(b.tmpContainers)
-		}
 		return b.image, nil
 	}
 	return "", fmt.Errorf("No image was generated. This may be because the Dockerfile does not, like, do anything.\n")
@@ -786,9 +807,23 @@ func (b *buildFile) BuildStep(name, expression string) error {
 	return nil
 }
 
-func NewBuildFile(srv *Server, outStream, errStream io.Writer, verbose, utilizeCache, rm bool, outOld io.Writer, sf *utils.StreamFormatter, auth *registry.AuthConfig, authConfigFile *registry.ConfigFile) BuildFile {
+func stripComments(raw []byte) string {
+	var (
+		out   []string
+		lines = strings.Split(string(raw), "\n")
+	)
+	for _, l := range lines {
+		if len(l) == 0 || l[0] == '#' {
+			continue
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, "\n")
+}
+
+func NewBuildFile(srv *Server, outStream, errStream io.Writer, verbose, utilizeCache, rm bool, outOld io.Writer, sf *utils.StreamFormatter, configFile *registry.ConfigFile) BuildFile {
 	return &buildFile{
-		runtime:       srv.runtime,
+		daemon:        srv.daemon,
 		srv:           srv,
 		config:        &runconfig.Config{},
 		outStream:     outStream,
@@ -799,8 +834,7 @@ func NewBuildFile(srv *Server, outStream, errStream io.Writer, verbose, utilizeC
 		utilizeCache:  utilizeCache,
 		rm:            rm,
 		sf:            sf,
-		authConfig:    auth,
-		configFile:    authConfigFile,
+		configFile:    configFile,
 		outOld:        outOld,
 	}
 }

@@ -3,10 +3,10 @@ package graph
 import (
 	"fmt"
 	"github.com/dotcloud/docker/archive"
+	"github.com/dotcloud/docker/daemon/graphdriver"
 	"github.com/dotcloud/docker/dockerversion"
 	"github.com/dotcloud/docker/image"
 	"github.com/dotcloud/docker/runconfig"
-	"github.com/dotcloud/docker/runtime/graphdriver"
 	"github.com/dotcloud/docker/utils"
 	"io"
 	"io/ioutil"
@@ -40,7 +40,7 @@ func NewGraph(root string, driver graphdriver.Driver) (*Graph, error) {
 
 	graph := &Graph{
 		Root:    abspath,
-		idIndex: utils.NewTruncIndex(),
+		idIndex: utils.NewTruncIndex([]string{}),
 		driver:  driver,
 	}
 	if err := graph.restore(); err != nil {
@@ -54,12 +54,14 @@ func (graph *Graph) restore() error {
 	if err != nil {
 		return err
 	}
+	var ids = []string{}
 	for _, v := range dir {
 		id := v.Name()
 		if graph.driver.Exists(id) {
-			graph.idIndex.Add(id)
+			ids = append(ids, id)
 		}
 	}
+	graph.idIndex = utils.NewTruncIndex(ids)
 	utils.Debugf("Restored %d elements", len(dir))
 	return nil
 }
@@ -189,7 +191,7 @@ func (graph *Graph) Register(jsonData []byte, layerData archive.ArchiveReader, i
 	}
 
 	// Create root filesystem in the driver
-	if err := graph.driver.Create(img.ID, img.Parent); err != nil {
+	if err := graph.driver.Create(img.ID, img.Parent, ""); err != nil {
 		return fmt.Errorf("Driver %s failed to create image rootfs %s: %s", graph.driver, img.ID, err)
 	}
 	// Mount the root filesystem so we can apply the diff/layer
@@ -259,6 +261,7 @@ func SetupInitLayer(initLayer string) error {
 		"/etc/hosts":       "file",
 		"/etc/hostname":    "file",
 		"/dev/console":     "file",
+		"/etc/mtab":        "/proc/mounts",
 		// "var/run": "dir",
 		// "var/lock": "dir",
 	} {
@@ -271,20 +274,24 @@ func SetupInitLayer(initLayer string) error {
 
 		if _, err := os.Stat(path.Join(initLayer, pth)); err != nil {
 			if os.IsNotExist(err) {
+				if err := os.MkdirAll(path.Join(initLayer, path.Dir(pth)), 0755); err != nil {
+					return err
+				}
 				switch typ {
 				case "dir":
 					if err := os.MkdirAll(path.Join(initLayer, pth), 0755); err != nil {
 						return err
 					}
 				case "file":
-					if err := os.MkdirAll(path.Join(initLayer, path.Dir(pth)), 0755); err != nil {
-						return err
-					}
 					f, err := os.OpenFile(path.Join(initLayer, pth), os.O_CREATE, 0755)
 					if err != nil {
 						return err
 					}
 					f.Close()
+				default:
+					if err := os.Symlink(typ, path.Join(initLayer, pth)); err != nil {
+						return err
+					}
 				}
 			} else {
 				return err

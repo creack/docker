@@ -8,8 +8,6 @@
 Docker Remote API v1.10
 =======================
 
-.. contents:: Table of Contents
-
 1. Brief introduction
 =====================
 
@@ -129,12 +127,10 @@ Create a container
                 "Cmd":[
                         "date"
                 ],
-                "Dns":null,
                 "Image":"base",
                 "Volumes":{
                         "/tmp": {}
                 },
-                "VolumesFrom":"",
                 "WorkingDir":"",
                 "DisableNetwork": false,
                 "ExposedPorts":{
@@ -203,10 +199,8 @@ Inspect a container
                                 "Cmd": [
                                         "date"
                                 ],
-                                "Dns": null,
                                 "Image": "base",
                                 "Volumes": {},
-                                "VolumesFrom": "",
                                 "WorkingDir":""
 
                         },
@@ -386,6 +380,8 @@ Start a container
                 "PortBindings":{ "22/tcp": [{ "HostPort": "11022" }] },
                 "PublishAllPorts":false,
                 "Privileged":false
+                "Dns": ["8.8.8.8"],
+                "VolumesFrom: ["parent", "other:ro"]
            }
 
         **Example response**:
@@ -793,10 +789,8 @@ Inspect an image
                                 "StdinOnce":false,
                                 "Env":null,
                                 "Cmd": ["/bin/bash"]
-                                ,"Dns":null,
                                 "Image":"base",
                                 "Volumes":null,
-                                "VolumesFrom":"",
                                 "WorkingDir":""
                         },
                 "Size": 6824592

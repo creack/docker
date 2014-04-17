@@ -18,7 +18,7 @@ https://github.com/gasi/docker-node-hello.
 Create Node.js app
 ++++++++++++++++++
 
-First, create a ``package.json`` file that describes your app and its
+First, create a directory ``src`` where all the files would live. Then create a ``package.json`` file that describes your app and its
 dependencies:
 
 .. code-block:: json
@@ -50,7 +50,7 @@ Then, create an ``index.js`` file that defines a web app using the
       res.send('Hello World\n');
     });
 
-    app.listen(PORT)
+    app.listen(PORT);
     console.log('Running on http://localhost:' + PORT);
 
 

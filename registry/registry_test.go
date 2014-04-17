@@ -146,6 +146,13 @@ func TestResolveRepositoryName(t *testing.T) {
 	}
 	assertEqual(t, ep, u, "Expected endpoint to be "+u)
 	assertEqual(t, repo, "private/moonbase", "Expected endpoint to be private/moonbase")
+
+	ep, repo, err = ResolveRepositoryName("ubuntu-12.04-base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, ep, IndexServerAddress(), "Expected endpoint to be "+IndexServerAddress())
+	assertEqual(t, repo, "ubuntu-12.04-base", "Expected endpoint to be ubuntu-12.04-base")
 }
 
 func TestPushRegistryTag(t *testing.T) {
@@ -203,6 +210,10 @@ func TestValidRepositoryName(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := validateRepositoryName("docker/Docker"); err == nil {
+		t.Log("Repository name should be invalid")
+		t.Fail()
+	}
+	if err := validateRepositoryName("docker///docker"); err == nil {
 		t.Log("Repository name should be invalid")
 		t.Fail()
 	}

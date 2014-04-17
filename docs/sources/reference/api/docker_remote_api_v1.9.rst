@@ -8,8 +8,6 @@
 Docker Remote API v1.9
 ======================
 
-.. contents:: Table of Contents
-
 1. Brief introduction
 =====================
 
@@ -432,7 +430,7 @@ Stop a container
 
            HTTP/1.1 204 OK
 
-        :query t: number of seconds to wait for the container to stop
+        :query t: number of seconds to wait before killing the container
         :statuscode 204: no error
         :statuscode 404: no such container
         :statuscode 500: server error
@@ -457,7 +455,7 @@ Restart a container
 
            HTTP/1.1 204 OK
 
-        :query t: number of seconds to wait for the container to stop
+        :query t: number of seconds to wait before killing the container
         :statuscode 204: no error
         :statuscode 404: no such container
         :statuscode 500: server error

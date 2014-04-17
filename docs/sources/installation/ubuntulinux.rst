@@ -68,7 +68,18 @@ easy. **See the** :ref:`installmirrors` **section below if you are not in
 the United States.** Other sources of the Debian packages may be
 faster for you to install.
 
-First add the Docker repository key to your local keychain.
+First, check that your APT system can deal with ``https`` URLs:
+the file ``/usr/lib/apt/methods/https`` should exist. If it doesn't,
+you need to install the package ``apt-transport-https``.
+
+.. code-block:: bash
+
+   [ -e /usr/lib/apt/methods/https ] || {
+     apt-get update
+     apt-get install apt-transport-https
+   }
+
+Then, add the Docker repository key to your local keychain.
 
 .. code-block:: bash
 
@@ -82,7 +93,7 @@ continue installation.*
 
 .. code-block:: bash
 
-   sudo sh -c "echo deb http://get.docker.io/ubuntu docker main\
+   sudo sh -c "echo deb https://get.docker.io/ubuntu docker main\
    > /etc/apt/sources.list.d/docker.list"
    sudo apt-get update
    sudo apt-get install lxc-docker
@@ -223,7 +234,7 @@ To install the latest version of docker, use the standard ``apt-get`` method:
 Memory and Swap Accounting
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-If want to enable memory and swap accounting, you must add the following
+If you want to enable memory and swap accounting, you must add the following
 command-line parameters to your kernel::
 
     cgroup_enable=memory swapaccount=1
@@ -238,7 +249,12 @@ And replace it by the following one::
 
     GRUB_CMDLINE_LINUX="cgroup_enable=memory swapaccount=1"
 
-Then run ``update-grub``, and reboot.
+Then run ``sudo update-grub``, and reboot.
+
+These parameters will help you get rid of the following warnings::
+
+    WARNING: Your kernel does not support cgroup swap limit.
+    WARNING: Your kernel does not support swap limit capabilities. Limitation discarded.
 
 Troubleshooting
 ^^^^^^^^^^^^^^^
@@ -281,8 +297,6 @@ incoming connections on the Docker port (default 4243):
 .. code-block:: bash
 
    sudo ufw allow 4243/tcp
-
-.. _installmirrors:
 
 Docker and local DNS server warnings
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -341,6 +355,8 @@ NetworkManager and Docker need to be restarted afterwards:
     sudo restart docker
 
 .. warning:: This might make DNS resolution slower on some networks.
+
+.. _installmirrors:
 
 Mirrors
 ^^^^^^^

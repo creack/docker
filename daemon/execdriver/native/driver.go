@@ -3,12 +3,6 @@ package native
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/dotcloud/docker/daemon/execdriver"
-	"github.com/dotcloud/docker/pkg/cgroups"
-	"github.com/dotcloud/docker/pkg/libcontainer"
-	"github.com/dotcloud/docker/pkg/libcontainer/apparmor"
-	"github.com/dotcloud/docker/pkg/libcontainer/nsinit"
-	"github.com/dotcloud/docker/pkg/system"
 	"io"
 	"io/ioutil"
 	"log"
@@ -19,6 +13,13 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/dotcloud/docker/daemon/execdriver"
+	"github.com/dotcloud/docker/pkg/apparmor"
+	"github.com/dotcloud/docker/pkg/cgroups"
+	"github.com/dotcloud/docker/pkg/libcontainer"
+	"github.com/dotcloud/docker/pkg/libcontainer/nsinit"
+	"github.com/dotcloud/docker/pkg/system"
 )
 
 const (

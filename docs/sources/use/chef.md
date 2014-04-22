@@ -4,12 +4,11 @@ page_keywords: chef, installation, usage, docker, documentation
 
 # Using Chef
 
-Note
-
-Please note this is a community contributed installation path. The only
-‘official’ installation is using the
-[*Ubuntu*](../../installation/ubuntulinux/#ubuntu-linux) installation
-path. This version may sometimes be out of date.
+> **Note**:
+> Please note this is a community contributed installation path. The only
+> ‘official’ installation is using the
+> [*Ubuntu*](../../installation/ubuntulinux/#ubuntu-linux) installation
+> path. This version may sometimes be out of date.
 
 ## Requirements
 
@@ -20,7 +19,7 @@ operating systems.
 ## Installation
 
 The cookbook is available on the [Chef Community
-Site](community.opscode.com/cookbooks/docker) and can be installed using
+Site](http://community.opscode.com/cookbooks/docker) and can be installed using
 your favorite cookbook dependency manager.
 
 The source can be found on

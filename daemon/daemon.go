@@ -323,21 +323,18 @@ func (daemon *Daemon) restore() error {
 		}
 	}
 
-	register := func(container *Container) {
-		if err := daemon.Register(container); err != nil {
-			utils.Debugf("Failed to register container %s: %s", container.ID, err)
-		}
-	}
-
+	debugEnv, testEnv := os.Getenv("DEBUG"), os.Getenv("TEST")
 	if entities := daemon.containerGraph.List("/", -1); entities != nil {
 		for _, p := range entities.Paths() {
-			if os.Getenv("DEBUG") == "" && os.Getenv("TEST") == "" {
+			if debugEnv == "" && testEnv == "" {
 				fmt.Print(".")
 			}
-			e := entities[p]
-			if container, ok := containers[e.ID()]; ok {
-				register(container)
-				delete(containers, e.ID())
+			id := entities[p].ID()
+			if container, ok := containers[id]; ok {
+				if err := daemon.Register(container); err != nil {
+					utils.Debugf("Failed to register container %s: %s", container.ID, err)
+				}
+				delete(containers, id)
 			}
 		}
 	}
@@ -353,7 +350,9 @@ func (daemon *Daemon) restore() error {
 		if _, err := daemon.containerGraph.Set(container.Name, container.ID); err != nil {
 			utils.Debugf("Setting default id - %s", err)
 		}
-		register(container)
+		if err := daemon.Register(container); err != nil {
+			utils.Debugf("Failed to register container %s: %s", container.ID, err)
+		}
 	}
 
 	if os.Getenv("DEBUG") == "" && os.Getenv("TEST") == "" {

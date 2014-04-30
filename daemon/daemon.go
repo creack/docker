@@ -161,8 +161,8 @@ func (daemon *Daemon) Register(container *Container) error {
 		container.stdinPipe = utils.NopWriteCloser(ioutil.Discard) // Silently drop stdin
 	}
 	// done
-	daemon.containers.PushBack(container)
-	daemon.idIndex.Add(container.ID)
+	//daemon.containers.PushBack(container)
+	//daemon.idIndex.Add(container.ID)
 
 	// FIXME: if the container is supposed to be running but is not, auto restart it?
 	//        if so, then we need to restart monitor and init a new lock

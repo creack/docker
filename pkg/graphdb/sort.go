@@ -1,27 +1,31 @@
 package graphdb
 
-import "sort"
-
-type pathSorter struct {
-	paths []string
-	by    func(i, j string) bool
+// Returns the depth or number of / in a given path
+func _PathDepth(p string) (ret int) {
+	var (
+		length = len(p)
+		n      = 0
+	)
+	for i := 0; i < length; i++ {
+		if p[i] == '/' {
+			n++
+		}
+	}
+	if n == 1 && length == 1 {
+		return 1
+	}
+	return n + 1
 }
 
 func sortByDepth(paths []string) {
-	s := &pathSorter{paths, func(i, j string) bool {
-		return PathDepth(i) > PathDepth(j)
-	}}
-	sort.Sort(s)
-}
-
-func (s *pathSorter) Len() int {
-	return len(s.paths)
-}
-
-func (s *pathSorter) Swap(i, j int) {
-	s.paths[i], s.paths[j] = s.paths[j], s.paths[i]
-}
-
-func (s *pathSorter) Less(i, j int) bool {
-	return s.by(s.paths[i], s.paths[j])
+	sorted := false
+	for !sorted {
+		sorted = true
+		for i := 0; i < len(paths)-1; i++ {
+			if _PathDepth(paths[i]) < _PathDepth(paths[i+1]) {
+				paths[i], paths[i+1] = paths[i+1], paths[i]
+				sorted = false
+			}
+		}
+	}
 }

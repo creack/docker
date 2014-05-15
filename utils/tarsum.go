@@ -89,9 +89,18 @@ func (ts *TarSum) Read(buf []byte) (int, error) {
 	if ts.finished {
 		return ts.bufGz.Read(buf)
 	}
-	buf2 := make([]byte, len(buf), cap(buf))
 
-	n, err := ts.tarR.Read(buf2)
+	var (
+		buf2 = make([]byte, len(buf), cap(buf))
+		n    int
+		err  error
+	)
+
+	if !ts.first {
+		n, err = ts.tarR.Read(buf2)
+	} else {
+		n, err = 0, io.EOF
+	}
 	if err != nil {
 		if err == io.EOF {
 			if _, err := ts.h.Write(buf2[:n]); err != nil {
